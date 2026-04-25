@@ -1,0 +1,30 @@
+{
+  "fields": {
+    "project": {
+      "key": "SPR"
+    },
+    "issuetype": {
+      "name": "Task"
+    },
+    "summary": "Example task created by Sprinter",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "This issue was created from a local ticket.json payload."
+            }
+          ]
+        }
+      ]
+    },
+    "labels": [
+      "sprinter",
+      "automation"
+    ]
+  }
+}

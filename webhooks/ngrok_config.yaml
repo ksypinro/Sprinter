@@ -1,0 +1,48 @@
+# Webhook setup orchestration settings.
+# Fill ngrok.auth_token or set NGROK_AUTHTOKEN before running:
+#   .venv/bin/python -m webhooks.setup
+
+ngrok:
+  command: "ngrok"
+  auth_token: ""
+  auth_token_env: "NGROK_AUTHTOKEN"
+  addr: "http://127.0.0.1:8090"
+  api_url: "http://127.0.0.1:4040/api/tunnels"
+  inspect: true
+  url:
+
+webhook_server:
+  host: "127.0.0.1"
+  port: 8090
+  path: "/webhooks/jira"
+  config_path: "config.yaml"
+  webhook_config_path: "webhooks/config.yaml"
+
+jira_webhook:
+  name: "Sprinter local export webhook"
+  description: "Export SCRUM issues into Sprinter artifacts when Jira sends issue-scoped webhook events."
+  jql: "project = SCRUM"
+  replace_existing: true
+  delete_on_exit: false
+  events:
+    - "jira:issue_created"
+    - "jira:issue_updated"
+    - "jira:issue_deleted"
+    - "comment_created"
+    - "comment_updated"
+    - "comment_deleted"
+    - "worklog_created"
+    - "worklog_updated"
+    - "worklog_deleted"
+    - "attachment_created"
+    - "attachment_deleted"
+    - "issuelink_created"
+    - "issuelink_deleted"
+    - "issue_property_set"
+    - "issue_property_deleted"
+
+checks:
+  timeout_seconds: 45
+  poll_interval_seconds: 1
+  run_smoke_test: true
+  smoke_issue_key: "SCRUM-1"

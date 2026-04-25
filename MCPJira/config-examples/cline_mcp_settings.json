@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "mcpjira": {
+      "transportType": "stdio",
+      "timeout": 180,
+      "command": ".venv/bin/python",
+      "args": [
+        "-m",
+        "MCPJira.server"
+      ],
+      "env": {
+        "PYTHONPATH": ".",
+        "SPRINTER_CONFIG": "config.yaml"
+      },
+      "disabled": false
+    }
+  }
+}

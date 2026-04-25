@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sprinter Architecture</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --surface: #ffffff;
+      --surface-muted: #eef2f7;
+      --border: #d8dee8;
+      --text: #172033;
+      --muted: #596579;
+      --jira: #2554d6;
+      --conf: #0f766e;
+      --mcp: #7c3aed;
+      --artifact: #b45309;
+      --code-bg: #111827;
+      --code-text: #e5e7eb;
+      --radius: 8px;
+      --shadow: 0 10px 28px rgba(23, 32, 51, 0.08);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+
+    a {
+      color: var(--jira);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 40px));
+      margin: 32px auto 72px;
+    }
+
+    header {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 36px;
+    }
+
+    .label {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    h1 {
+      max-width: 840px;
+      margin-top: 18px;
+      font-size: clamp(36px, 6vw, 58px);
+    }
+
+    h2 {
+      font-size: clamp(26px, 4vw, 34px);
+      margin-bottom: 10px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .lead {
+      max-width: 850px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 650;
+      background: #fbfcff;
+    }
+
+    main {
+      display: grid;
+      gap: 28px;
+      margin-top: 28px;
+    }
+
+    section {
+      scroll-margin-top: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px;
+    }
+
+    .section-intro {
+      max-width: 850px;
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+    }
+
+    .box {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fbfcff;
+      padding: 16px;
+    }
+
+    .box p,
+    li,
+    td {
+      color: var(--muted);
+    }
+
+    .box strong {
+      color: var(--text);
+    }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 220px) 1fr;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .lane {
+      border-radius: var(--radius);
+      padding: 14px;
+      color: #ffffff;
+      font-weight: 750;
+      display: flex;
+      align-items: center;
+    }
+
+    .lane.cli {
+      background: var(--jira);
+    }
+
+    .lane.mcp {
+      background: var(--mcp);
+    }
+
+    .lane.core {
+      background: #334155;
+    }
+
+    .lane.api {
+      background: var(--conf);
+    }
+
+    .lane.store {
+      background: var(--artifact);
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+    }
+
+    .step {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      background: #fbfcff;
+    }
+
+    .step span {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--text);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #fbfcff;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--text);
+      background: var(--surface-muted);
+      font-weight: 750;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.92em;
+      background: #eef2ff;
+      color: #243876;
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      border-radius: var(--radius);
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 16px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    ul,
+    ol {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    .tree {
+      margin-top: 12px;
+    }
+
+    .note {
+      border-left: 4px solid var(--artifact);
+      background: #fff8ed;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      color: #713f12;
+    }
+
+    footer {
+      color: var(--muted);
+      margin-top: 28px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100% - 24px, 1180px);
+        margin-top: 16px;
+      }
+
+      header,
+      section {
+        padding: 20px;
+      }
+
+      .flow-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <span class="label">Reviewed against the current codebase</span>
+      <h1>Sprinter Architecture</h1>
+      <p class="lead">
+        Sprinter is a local Jira and Confluence integration utility. The CLI performs the core export and create workflows.
+        The optional MCP packages expose those workflows to local MCP clients while keeping large artifacts on disk.
+      </p>
+
+      <nav aria-label="Page sections">
+        <a href="#snapshot">Snapshot</a>
+        <a href="#system-map">System map</a>
+        <a href="#components">Components</a>
+        <a href="#configuration">Configuration</a>
+        <a href="#flows">Runtime flows</a>
+        <a href="#artifacts">Artifacts</a>
+        <a href="#mcp">MCP</a>
+        <a href="#webhooks">Webhooks</a>
+        <a href="#limits">Limits</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="snapshot">
+        <h2>Architecture Snapshot</h2>
+        <p class="section-intro">
+          The project is intentionally small. It has one CLI orchestration module, one HTTP integration module,
+          one helper module, three MCP adapter packages, a webhook receiver package, and a Jira webhook management package.
+        </p>
+
+        <div class="grid">
+          <div class="box">
+            <h3>Primary purpose</h3>
+            <p>Export Jira issue data, linked Confluence content, attachments, logs, and manifests into local files.</p>
+          </div>
+          <div class="box">
+            <h3>Secondary purpose</h3>
+            <p>Create Jira issues from JSON payloads and preserve the request and response artifacts.</p>
+          </div>
+          <div class="box">
+            <h3>Runtime model</h3>
+            <p>Commands run locally, call Atlassian REST APIs over HTTPS, and write artifacts under <code>storage.export_path</code>.</p>
+          </div>
+          <div class="box">
+            <h3>Extension model</h3>
+            <p><code>MCPJira</code> runs over stdio. <code>JiraStreamableMCP</code> runs over Streamable HTTP. <code>JiraSSEMCP</code> runs over SSE. <code>webhooks/</code> receives Jira pushes.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="system-map">
+        <h2>System Map</h2>
+        <p class="section-intro">
+          The CLI and MCP server are separate entrypoints, but they converge on the same fetcher and artifact-writing behavior.
+        </p>
+
+        <div class="flow">
+          <div class="flow-row">
+            <div class="lane cli">CLI user</div>
+            <div class="box"><strong><code>main.py</code></strong> parses <code>export</code> and <code>create</code>, loads config, builds fetchers, runs workflow functions, and writes manifests.</div>
+          </div>
+          <div class="flow-row">
+            <div class="lane mcp">MCP clients</div>
+            <div class="box"><strong><code>MCPJira/server.py</code></strong> serves stdio clients. <strong><code>JiraStreamableMCP/server.py</code></strong> serves Streamable HTTP clients. <strong><code>JiraSSEMCP/server.py</code></strong> serves SSE clients. Each package has its own service facade.</div>
+          </div>
+          <div class="flow-row">
+            <div class="lane api">Jira webhooks</div>
+            <div class="box"><strong><code>webhooks/server.py</code></strong> receives signed Jira events. <strong><code>webhooks/store.py</code></strong> deduplicates events and stores jobs. <strong><code>webhooks/worker.py</code></strong> exports the affected issue through the existing service facade.</div>
+          </div>
+          <div class="flow-row">
+            <div class="lane core">Core modules</div>
+            <div class="box"><strong><code>fetcher.py</code></strong> owns Jira and Confluence HTTP behavior. <strong><code>utils.py</code></strong> owns URL parsing, safe filenames, path collision handling, and file writes.</div>
+          </div>
+          <div class="flow-row">
+            <div class="lane api">Atlassian APIs</div>
+            <div class="box">Jira provides issue data, activity, remote links, attachments, and create-issue responses. Confluence provides page bodies, hierarchy, comments, and attachments.</div>
+          </div>
+          <div class="flow-row">
+            <div class="lane store">Filesystem</div>
+            <div class="box"><code>exports/</code> is the durable contract for users and MCP clients. <code>exports/.webhooks/</code> is the webhook event and job store.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="components">
+        <h2>Component Responsibilities</h2>
+        <p class="section-intro">
+          This table maps each important file to the role it actually plays in the current implementation.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Responsibility</th>
+              <th>Important dependencies</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>main.py</code></td>
+              <td>CLI arguments, config loading, auth resolution, export orchestration, create orchestration, logging, and manifests.</td>
+              <td><code>fetcher.py</code>, <code>utils.py</code>, <code>yaml</code>, Python standard library.</td>
+            </tr>
+            <tr>
+              <td><code>fetcher.py</code></td>
+              <td>HTTP sessions, auth headers, retries, pagination, Jira endpoints, Confluence endpoints, and binary downloads.</td>
+              <td><code>requests</code>, <code>urllib3</code>, <code>utils.resolve_url</code>.</td>
+            </tr>
+            <tr>
+              <td><code>utils.py</code></td>
+              <td>Jira issue-key parsing, Confluence page-id parsing, legacy Confluence path parsing, safe filenames, unique paths, and JSON/text writes.</td>
+              <td>Python standard library only.</td>
+            </tr>
+            <tr>
+              <td><code>config.yaml</code></td>
+              <td>Service base URLs, auth mode, request tuning, logging level, export path, attachment download flag, and descendant settings.</td>
+              <td>Environment variables for secret values when <code>token_env</code> or <code>email_env</code> is used.</td>
+            </tr>
+            <tr>
+              <td><code>MCPJira/service.py</code></td>
+              <td>Small facade that exposes export, create, and artifact-read methods to the stdio MCP server.</td>
+              <td><code>main.py</code>, <code>utils.py</code>, <code>SPRINTER_CONFIG</code>.</td>
+            </tr>
+            <tr>
+              <td><code>MCPJira/server.py</code></td>
+              <td>FastMCP tool/resource registration and stdio server startup.</td>
+              <td><code>mcp.server.fastmcp.FastMCP</code>, <code>MCPJira.service.SprinterService</code>.</td>
+            </tr>
+            <tr>
+              <td><code>JiraStreamableMCP/service.py</code></td>
+              <td>Independent HTTP-oriented facade that exposes the same Sprinter workflows with Streamable HTTP metadata and resource URIs.</td>
+              <td><code>main.py</code>, <code>utils.py</code>, <code>JiraStreamableMCP.settings</code>.</td>
+            </tr>
+            <tr>
+              <td><code>JiraStreamableMCP/server.py</code></td>
+              <td>Streamable HTTP server entrypoint with CLI and environment-backed host, port, path, config, and log-level settings.</td>
+              <td><code>JiraStreamableMCP.app.create_streamable_mcp</code>, FastMCP Streamable HTTP transport.</td>
+            </tr>
+            <tr>
+              <td><code>JiraSSEMCP/service.py</code></td>
+              <td>Independent SSE-oriented facade that exposes the same Sprinter workflows with SSE metadata and resource URIs.</td>
+              <td><code>main.py</code>, <code>utils.py</code>, <code>JiraSSEMCP.settings</code>.</td>
+            </tr>
+            <tr>
+              <td><code>JiraSSEMCP/server.py</code></td>
+              <td>SSE server entrypoint with CLI and environment-backed host, port, stream path, message path, config, and log-level settings.</td>
+              <td><code>JiraSSEMCP.app.create_sse_mcp</code>, FastMCP SSE transport.</td>
+            </tr>
+            <tr>
+              <td><code>webhooks/</code></td>
+              <td>Webhook HTTP receiver, Jira payload parser, signature verification, filesystem event/job store, background export worker, and setup automation.</td>
+              <td>Python standard library, <code>requests</code>, <code>PyYAML</code>, <code>JiraStreamableMCP.service</code>, <code>webhookAPI</code>.</td>
+            </tr>
+            <tr>
+              <td><code>webhookAPI/</code></td>
+              <td>Programmatic Jira webhook management for admin webhooks and dynamic app webhooks.</td>
+              <td><code>requests</code>, <code>fetcher.AuthConfig</code>, <code>main.load_config</code>.</td>
+            </tr>
+            <tr>
+              <td><code>tests/</code></td>
+              <td>Unit coverage for core workflow helpers, webhook handling, webhook setup helpers, and webhook API clients.</td>
+              <td>Python <code>unittest</code>.</td>
+            </tr>
+            <tr>
+              <td><code>MCPJira/tests/</code></td>
+              <td>Unit coverage for the MCP service facade without real Atlassian API calls.</td>
+              <td>Python <code>unittest</code>.</td>
+            </tr>
+            <tr>
+              <td><code>JiraStreamableMCP/tests/</code> and <code>JiraSSEMCP/tests/</code></td>
+              <td>Unit coverage for HTTP MCP settings, app factories, and service facades without real Atlassian API calls.</td>
+              <td>Python <code>unittest</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="configuration">
+        <h2>Configuration and Dependency Boundaries</h2>
+        <p class="section-intro">
+          Configuration is shared by the CLI and MCP surfaces. Dependencies are split so the base CLI install stays minimal.
+        </p>
+
+        <div class="grid">
+          <div class="box">
+            <h3>Base requirements</h3>
+            <p><code>requirements.txt</code> installs <code>requests</code> for HTTP and <code>PyYAML</code> for config parsing across the CLI, webhooks, and webhook API package.</p>
+          </div>
+          <div class="box">
+            <h3>MCP requirements</h3>
+            <p><code>MCPJira/requirements.txt</code>, <code>JiraStreamableMCP/requirements.txt</code>, and <code>JiraSSEMCP/requirements.txt</code> include the base requirements and add <code>mcp[cli]</code>.</p>
+          </div>
+          <div class="box">
+            <h3>Auth strategy</h3>
+            <p>Each service supports bearer tokens or basic auth. Secrets can be inline, but environment variables are the safer path.</p>
+          </div>
+          <div class="box">
+            <h3>Storage strategy</h3>
+            <p>The filesystem is the persistence layer. Tool responses stay small and point to saved artifact paths, MCP resource URIs, or webhook job files.</p>
+          </div>
+        </div>
+
+        <pre><code>jira:
+  base_url: "https://your-domain.atlassian.net"
+  auth:
+    type: "basic"
+    email_env: "ATLASSIAN_EMAIL"
+    token_env: "ATLASSIAN_API_TOKEN"
+
+confluence:
+  base_url: "https://your-domain.atlassian.net/wiki"
+  auth:
+    type: "basic"
+    email_env: "ATLASSIAN_EMAIL"
+    token_env: "ATLASSIAN_API_TOKEN"
+
+storage:
+  export_path: "./exports"</code></pre>
+      </section>
+
+      <section id="flows">
+        <h2>Runtime Flows</h2>
+        <p class="section-intro">
+          These are the operational paths implemented by the current code, not aspirational architecture.
+        </p>
+
+        <div class="grid">
+          <div class="box">
+            <h3>Export issue</h3>
+            <ol>
+              <li>Parse a Jira issue key from the provided URL.</li>
+              <li>Validate the URL host against <code>jira.base_url</code>.</li>
+              <li>Fetch issue JSON, comments, worklogs, changelog, remote links, and attachments.</li>
+              <li>Optionally download Jira attachment binaries.</li>
+              <li>Resolve Confluence page IDs from same-host remote links.</li>
+              <li>Export linked pages and configured descendants.</li>
+              <li>Write <code>export.log</code> and <code>export_manifest.json</code>.</li>
+            </ol>
+          </div>
+
+          <div class="box">
+            <h3>Create issue</h3>
+            <ol>
+              <li>Load a JSON payload from a file in the CLI, or receive a payload dict through MCP.</li>
+              <li>Validate the minimum create-issue shape before calling Jira.</li>
+              <li>Send <code>POST /rest/api/3/issue</code>.</li>
+              <li>Use the returned key or ID to choose the final artifact directory.</li>
+              <li>Write request, response, source metadata, log, and manifest files.</li>
+            </ol>
+          </div>
+
+          <div class="box">
+            <h3>MCP invocation</h3>
+            <ol>
+              <li>For stdio, the client starts <code>.venv/bin/python -m MCPJira.server</code>.</li>
+              <li>For HTTP, the operator starts <code>.venv/bin/python -m JiraStreamableMCP.server</code>.</li>
+              <li>For SSE, the operator starts <code>.venv/bin/python -m JiraSSEMCP.server</code>.</li>
+              <li>FastMCP exposes tool and resource schemas over the selected transport.</li>
+              <li>The tool handler calls the package-specific service facade.</li>
+              <li>The service runs the same core workflow functions used by the CLI.</li>
+              <li>The client receives a compact summary and can read resources for larger JSON artifacts.</li>
+            </ol>
+          </div>
+
+          <div class="box">
+            <h3>Webhook invocation</h3>
+            <ol>
+              <li>Jira sends a signed issue-scoped event to <code>/webhooks/jira</code>.</li>
+              <li>The webhook app verifies the local secret header or Jira <code>X-Hub-Signature</code>.</li>
+              <li>The parser normalizes event type, issue key, project, actor, and raw payload.</li>
+              <li>The filesystem store records the event and suppresses duplicate deliveries.</li>
+              <li>Accepted events enqueue export jobs under <code>exports/.webhooks/jobs/queued/</code>.</li>
+              <li>The worker exports the issue through the existing Sprinter service facade.</li>
+              <li>Job state moves to <code>success</code> or <code>failed</code>, and the export manifest records webhook trigger metadata.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section id="artifacts">
+        <h2>Artifact Contract</h2>
+        <p class="section-intro">
+          The artifact tree is the shared output contract between the CLI, MCP clients, and humans inspecting the result.
+        </p>
+
+        <pre class="tree"><code>exports/
+  .webhooks/
+    events/
+    jobs/
+      queued/
+      running/
+      success/
+      failed/
+  &lt;ISSUE-KEY&gt;/
+    issue.json
+    comments.json
+    worklogs.json
+    changelog.json
+    remote_links.json
+    attachments.json
+    attachments/
+    wiki/
+      linked_pages.json
+      unresolved_links.json
+      page_&lt;PAGE-ID&gt;/
+        page.json
+        ancestors.json
+        descendants.json
+        footer_comments.json
+        inline_comments.json
+        attachments.json
+        &lt;page title&gt;.storage.html
+        attachments/
+    export.log
+    export_manifest.json
+  created/
+    &lt;ISSUE-KEY&gt;/
+      ticket_request.json
+      ticket_response.json
+      ticket_source.json
+      export.log
+      export_manifest.json</code></pre>
+
+        <div class="note">
+          The manifest is the high-level run summary. The log is the chronological trace. The JSON files are the raw evidence for later review, replay, or debugging.
+        </div>
+      </section>
+
+      <section id="webhooks">
+        <h2>Webhook Surface</h2>
+        <p class="section-intro">
+          The webhook packages add a push-based path beside the CLI and MCP pull/invocation paths. They still reuse the same Jira export workflow.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>webhooks/server.py</code></td>
+              <td>Starts a local stdlib HTTP server with <code>/webhooks/jira</code>, <code>/health</code>, <code>/ready</code>, and <code>/jobs/{job_id}</code>.</td>
+            </tr>
+            <tr>
+              <td><code>webhooks/app.py</code></td>
+              <td>Coordinates verification, parsing, filtering, dedupe, record-only events, and job enqueueing.</td>
+            </tr>
+            <tr>
+              <td><code>webhooks/store.py</code></td>
+              <td>Stores event records and job lifecycle files under <code>exports/.webhooks/</code> using atomic JSON writes.</td>
+            </tr>
+            <tr>
+              <td><code>webhooks/setup.py</code></td>
+              <td>Starts the webhook server and ngrok, discovers the public URL, registers the Jira admin webhook, and runs readiness checks.</td>
+            </tr>
+            <tr>
+              <td><code>webhookAPI/</code></td>
+              <td>Creates, lists, gets, deletes, registers, and refreshes Jira webhook registrations through Jira REST APIs.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="mcp">
+        <h2>MCP Surface</h2>
+        <p class="section-intro">
+          The MCP packages are adapters. They do not embed a model and do not create a second Atlassian API implementation.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Tool or resource</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>MCPJira</code></td>
+              <td>Existing stdio package with tools named <code>jira_export_issue</code>, <code>jira_create_issue</code>, and artifact readers.</td>
+            </tr>
+            <tr>
+              <td><code>JiraStreamableMCP</code></td>
+              <td>New Streamable HTTP package with tools named <code>jira_stream_export_issue</code>, <code>jira_stream_create_issue</code>, and HTTP server diagnostics.</td>
+            </tr>
+            <tr>
+              <td><code>JiraSSEMCP</code></td>
+              <td>SSE package with tools named <code>jira_sse_export_issue</code>, <code>jira_sse_create_issue</code>, and SSE server diagnostics.</td>
+            </tr>
+            <tr>
+              <td><code>jira_export_issue(ticket_url)</code></td>
+              <td>Exports a Jira issue and linked Confluence pages, then returns issue key, artifact paths, counts, and a manifest resource URI.</td>
+            </tr>
+            <tr>
+              <td><code>jira_create_issue(payload)</code></td>
+              <td>Creates a Jira issue from a structured payload, then returns issue key, artifact paths, and a response resource URI.</td>
+            </tr>
+            <tr>
+              <td><code>jira_get_export_manifest(issue_key)</code></td>
+              <td>Reads and returns an existing export manifest from disk.</td>
+            </tr>
+            <tr>
+              <td><code>jira_get_created_issue_response(issue_key)</code></td>
+              <td>Reads and returns an existing created-issue response from disk.</td>
+            </tr>
+            <tr>
+              <td><code>sprinter://exports/{issue_key}/manifest</code></td>
+              <td>Read-only JSON resource for an exported issue manifest.</td>
+            </tr>
+            <tr>
+              <td><code>sprinter://created/{issue_key}/response</code></td>
+              <td>Read-only JSON resource for a created issue response.</td>
+            </tr>
+            <tr>
+              <td><code>jirastream://exports/{issue_key}/manifest</code></td>
+              <td>Streamable HTTP package read-only JSON resource for an exported issue manifest.</td>
+            </tr>
+            <tr>
+              <td><code>jirastream://created/{issue_key}/response</code></td>
+              <td>Streamable HTTP package read-only JSON resource for a created issue response.</td>
+            </tr>
+            <tr>
+              <td><code>jirasse://exports/{issue_key}/manifest</code></td>
+              <td>SSE package read-only JSON resource for an exported issue manifest.</td>
+            </tr>
+            <tr>
+              <td><code>jirasse://created/{issue_key}/response</code></td>
+              <td>SSE package read-only JSON resource for a created issue response.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="limits">
+        <h2>Boundaries and Limits</h2>
+        <p class="section-intro">
+          These constraints are useful when extending the project or diagnosing missing data.
+        </p>
+
+        <ul>
+          <li>Confluence discovery starts from Jira remote links only.</li>
+          <li>Remote links are ignored unless their host matches <code>confluence.base_url</code>.</li>
+          <li>Legacy Confluence display links are resolved by search when a space key and title can be parsed.</li>
+          <li>Confluence page bodies are stored in storage format, not rendered HTML.</li>
+          <li>The workflows are synchronous and single-issue oriented.</li>
+          <li>All MCP packages expect local filesystem access to the same artifact directory as the CLI.</li>
+          <li>The HTTP MCP packages should stay bound to <code>127.0.0.1</code> unless protected by network controls.</li>
+          <li>The webhook server is local by default; Jira Cloud needs a public tunnel such as ngrok to deliver events to it.</li>
+          <li>Generated <code>exports/</code> artifacts are machine-specific output and should not be treated as source documentation.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      Sprinter architecture reference. Current implementation files: main.py, fetcher.py, utils.py, MCPJira/, JiraStreamableMCP/, JiraSSEMCP/, webhooks/, and webhookAPI/.
+    </footer>
+  </div>
+</body>
+</html>

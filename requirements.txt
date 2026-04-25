@@ -1,0 +1,3 @@
+# Core runtime dependencies for the CLI, webhook server, and webhook API.
+requests>=2.31,<3
+PyYAML>=6.0,<7

@@ -1,0 +1,16 @@
+# Paste this block into your Codex config file.
+# Global: ~/.codex/config.toml
+# Project-level alternative: .codex/config.toml
+#
+# This example assumes the MCP client launches from the Sprinter repository root.
+
+[mcp_servers.mcpjira]
+command = ".venv/bin/python"
+args = ["-m", "MCPJira.server"]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+supports_parallel_tool_calls = false
+
+[mcp_servers.mcpjira.env]
+PYTHONPATH = "."
+SPRINTER_CONFIG = "config.yaml"
