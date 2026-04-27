@@ -1,0 +1,73 @@
+# Default local orchestrator settings.
+
+orchestrator:
+  storage_root: exports/.orchestrator
+  exports_root: exports
+  event_poll_interval_seconds: 1.0
+  command_poll_interval_seconds: 1.0
+  worker_monitor_interval_seconds: 5.0
+  default_max_attempts: 3
+  default_retry_backoff_seconds:
+    - 10
+    - 30
+    - 90
+  log_level: INFO
+  log_file: exports/.orchestrator/logs/orchestrator.log
+
+safety:
+  auto_export_after_issue_created: true
+  auto_analyze_after_export: true
+  auto_execute_after_plan: false
+  auto_create_pr_after_execution: false
+  auto_review_after_pr: false
+
+workers:
+  export_jira_issue:
+    enabled: true
+    instances: 3
+    timeout_seconds: 300
+    max_attempts: 3
+    command: .venv/bin/python
+    args:
+      - -m
+      - workers.export_jira_worker
+
+  analyze_issue:
+    enabled: true
+    instances: 2
+    timeout_seconds: 900
+    max_attempts: 3
+    command: .venv/bin/python
+    args:
+      - -m
+      - workers.planner_worker
+
+  execute_plan:
+    enabled: false
+    instances: 1
+    timeout_seconds: 1800
+    max_attempts: 3
+    command: .venv/bin/python
+    args:
+      - -m
+      - workers.executor_worker
+
+  create_pull_request:
+    enabled: false
+    instances: 1
+    timeout_seconds: 300
+    max_attempts: 3
+    command: .venv/bin/python
+    args:
+      - -m
+      - workers.github_pr_worker
+
+  review_pull_request:
+    enabled: false
+    instances: 2
+    timeout_seconds: 900
+    max_attempts: 3
+    command: .venv/bin/python
+    args:
+      - -m
+      - workers.reviewer_worker
