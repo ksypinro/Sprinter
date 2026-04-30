@@ -30,13 +30,14 @@ def main_worker(run_func: Callable[[WorkerRuntime], WorkerResult], argv: Optiona
 
     repo_root = Path.cwd()
     command_id = os.environ.get("SPRINTER_WORKER_COMMAND_ID", "debug")
+    command_type = os.environ.get("SPRINTER_WORKER_COMMAND_TYPE", "worker")
     workflow_id = os.environ.get("SPRINTER_WORKER_WORKFLOW_ID", "debug")
     result_path = Path(os.environ.get("SPRINTER_WORKER_RESULT_PATH", "result.json"))
 
     payload = json.loads(args.payload) if args.payload else {}
     command = OrchestratorCommand.from_dict({
         "command_id": command_id,
-        "command_type": "worker",
+        "command_type": command_type,
         "workflow_id": workflow_id,
         "payload": payload,
         "created_at": utc_now_iso()

@@ -30,10 +30,16 @@ class ExportService(Protocol):
 class WebhookExportService:
     """Adapter from normalized webhook events to Sprinter exports."""
 
-    def __init__(self, config_path: str = "config.yaml", service: Optional[ExportService] = None):
+    def __init__(
+        self,
+        config_path: str = "config.yaml",
+        service: Optional[ExportService] = None,
+        analysis_service: Optional[object] = None,
+    ):
         """Initialize the export adapter."""
 
         self.service = service or JiraStreamableService(config_path=config_path)
+        self.analysis_service = analysis_service
 
     def export_event(self, event: WebhookEvent) -> Dict[str, Any]:
         """Export the issue referenced by a webhook event."""
@@ -42,9 +48,19 @@ class WebhookExportService:
         manifest_path = result.get("manifest_path")
         if manifest_path:
             self._augment_manifest(Path(manifest_path), event)
+        if self.analysis_service:
+            analysis_result = self.analysis_service.analyze_export(event, result)
+            result["codex_analysis"] = analysis_result
+            if manifest_path:
+                self._augment_manifest(Path(manifest_path), event, codex_analysis=analysis_result)
         return result
 
-    def _augment_manifest(self, manifest_path: Path, event: WebhookEvent) -> None:
+    def _augment_manifest(
+        self,
+        manifest_path: Path,
+        event: WebhookEvent,
+        codex_analysis: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Record webhook trigger metadata in the export manifest."""
 
         try:
@@ -63,6 +79,8 @@ class WebhookExportService:
             "received_at": event.received_at,
             "recorded_at": utc_now_iso(),
         }
+        if codex_analysis is not None:
+            manifest["codex_analysis"] = codex_analysis
         self._atomic_write_json(manifest_path, manifest)
 
     def _atomic_write_json(self, path: Path, payload: Dict[str, Any]) -> None:

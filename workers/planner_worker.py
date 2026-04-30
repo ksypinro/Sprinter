@@ -24,7 +24,14 @@ def run(runtime: WorkerRuntime) -> WorkerResult:
         raw_payload=runtime.command.payload
     )
     
-    result = analysis_service.analyze_export(event, {"issue_key": issue_key, "issue_dir": issue_dir, "manifest_path": manifest_path})
+    if analysis_service:
+        result = analysis_service.analyze_export(event, {
+            "issue_key": issue_key,
+            "issue_dir": issue_dir,
+            "manifest_path": manifest_path,
+        })
+    else:
+        result = {"enabled": False, "status": "skipped", "issue_key": issue_key}
     finished_at = utc_now_iso()
     
     return WorkerResult(

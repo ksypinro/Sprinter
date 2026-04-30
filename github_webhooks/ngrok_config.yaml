@@ -1,0 +1,41 @@
+# GitHub webhook setup orchestration settings.
+#
+# Usage:
+#   SPRINTER_GITHUB_TOKEN=... \
+#   SPRINTER_GITHUB_OWNER=... \
+#   SPRINTER_GITHUB_REPO=... \
+#   SPRINTER_GITHUB_WEBHOOK_SECRET=... \
+#   .venv/bin/python -m github_webhooks.setup
+
+ngrok:
+  command: "ngrok"
+  auth_token: ""
+  auth_token_env: "NGROK_AUTHTOKEN"
+  addr: "http://127.0.0.1:8091"
+  api_url: "http://127.0.0.1:4040/api/tunnels"
+  inspect: true
+  url:
+
+webhook_server:
+  host: "127.0.0.1"
+  port: 8091
+  path: "/webhooks/github"
+  store_path: "exports/.github_webhooks"
+
+github_webhook:
+  events:
+    - "pull_request"
+    - "push"
+    - "pull_request_review_comment"
+  active: true
+  content_type: "json"
+  insecure_ssl: "0"
+  replace_existing: true
+  delete_on_exit: false
+
+checks:
+  timeout_seconds: 45
+  poll_interval_seconds: 1
+  run_smoke_test: true
+  smoke_workflow_id: "SCRUM-1"
+  smoke_pr_number: 1

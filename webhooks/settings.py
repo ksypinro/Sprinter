@@ -53,6 +53,7 @@ class WebhookSettings:
     store_path: Optional[str] = None
     poll_interval_seconds: float = 1.0
     worker_enabled: bool = True
+    use_orchestrator: bool = True
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "WebhookSettings":
@@ -75,6 +76,7 @@ class WebhookSettings:
         - ``SPRINTER_WEBHOOK_STORE_PATH``
         - ``SPRINTER_WEBHOOK_POLL_INTERVAL_SECONDS``
         - ``SPRINTER_WEBHOOK_WORKER_ENABLED``
+        - ``SPRINTER_WEBHOOK_USE_ORCHESTRATOR``
         """
 
         source = env or os.environ
@@ -124,6 +126,11 @@ class WebhookSettings:
             default=bool(worker_config.get("enabled", cls.worker_enabled)),
             field_name="SPRINTER_WEBHOOK_WORKER_ENABLED",
         )
+        use_orchestrator = cls._parse_bool(
+            source.get("SPRINTER_WEBHOOK_USE_ORCHESTRATOR"),
+            default=bool(worker_config.get("use_orchestrator", cls.use_orchestrator)),
+            field_name="SPRINTER_WEBHOOK_USE_ORCHESTRATOR",
+        )
 
         settings = cls(
             host=source.get("SPRINTER_WEBHOOK_HOST", server_config.get("host", cls.host)).strip(),
@@ -150,6 +157,7 @@ class WebhookSettings:
             store_path=(source.get("SPRINTER_WEBHOOK_STORE_PATH") or store_config.get("store_path") or "").strip() or None,
             poll_interval_seconds=poll_interval,
             worker_enabled=worker_enabled,
+            use_orchestrator=use_orchestrator,
         )
         settings.validate()
         return settings
@@ -159,8 +167,8 @@ class WebhookSettings:
 
         if not self.host:
             raise WebhookSettingsError("SPRINTER_WEBHOOK_HOST must not be empty.")
-        if self.port < 1 or self.port > 65535:
-            raise WebhookSettingsError("SPRINTER_WEBHOOK_PORT must be between 1 and 65535.")
+        if self.port < 0 or self.port > 65535:
+            raise WebhookSettingsError("SPRINTER_WEBHOOK_PORT must be between 0 and 65535.")
         if not self.jira_path.startswith("/"):
             raise WebhookSettingsError("SPRINTER_WEBHOOK_JIRA_PATH must start with '/'.")
         if not self.config_path:

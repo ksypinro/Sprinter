@@ -13,6 +13,11 @@ def safe_filename(name: str) -> str:
 
 class EventType(str, Enum):
     JIRA_ISSUE_CREATED = "jira.issue.created"
+    GITHUB_PR_OPENED = "github.pull_request.opened"
+    GITHUB_PR_SYNCHRONIZE = "github.pull_request.synchronize"
+    GITHUB_PR_REOPENED = "github.pull_request.reopened"
+    GITHUB_PR_REVIEW_COMMENT = "github.pull_request_review_comment.created"
+    GITHUB_PUSH_MAIN = "github.push.main"
     RETRY_REQUESTED = "retry_requested"
     PAUSE_REQUESTED = "pause_requested"
     RESUME_REQUESTED = "resume_requested"
@@ -45,6 +50,9 @@ class WorkflowStatus(str, Enum):
     PR_REQUESTED = "pr_requested"
     PR_RUNNING = "pr_running"
     PR_COMPLETED = "pr_completed"
+    REVIEW_REQUESTED = "review_requested"
+    REVIEW_RUNNING = "review_running"
+    REVIEW_COMPLETED = "review_completed"
     BLOCKED = "blocked"
     PAUSED = "paused"
 
@@ -189,6 +197,21 @@ class WorkerResult:
     error: Optional[str] = None
     stdout_path: Optional[str] = None
     stderr_path: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "workflow_id": self.workflow_id,
+            "command_type": self.command_type,
+            "success": self.success,
+            "returncode": self.returncode,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "artifacts": self.artifacts,
+            "error": self.error,
+            "stdout_path": self.stdout_path,
+            "stderr_path": self.stderr_path,
+        }
 
     def to_event(self) -> OrchestratorEvent:
         return OrchestratorEvent.new(
