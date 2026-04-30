@@ -17,9 +17,25 @@ orchestrator:
 safety:
   auto_export_after_issue_created: true
   auto_analyze_after_export: true
-  auto_execute_after_plan: false
-  auto_create_pr_after_execution: false
-  auto_review_after_pr: false
+  auto_execute_after_plan: true
+  auto_create_pr_after_execution: true
+  auto_review_after_pr: true
+
+webhook_servers:
+  auto_start: true
+  jira:
+    enabled: true
+    host: 127.0.0.1
+    port: 8090
+    path: /webhooks/jira
+    config_path: config.yaml
+    store_path:
+  github:
+    enabled: true
+    host: 127.0.0.1
+    port: 8091
+    path: /webhooks/github
+    store_path: exports/.github_webhooks
 
 workers:
   export_jira_issue:
@@ -43,31 +59,31 @@ workers:
       - workers.planner_worker
 
   execute_plan:
-    enabled: false
+    enabled: true
     instances: 1
     timeout_seconds: 1800
     max_attempts: 3
     command: .venv/bin/python
     args:
       - -m
-      - workers.executor_worker
+      - workers.implementer_worker
 
   create_pull_request:
-    enabled: false
+    enabled: true
     instances: 1
     timeout_seconds: 300
     max_attempts: 3
     command: .venv/bin/python
     args:
       - -m
-      - workers.github_pr_worker
+      - workers.github_pusher_worker
 
   review_pull_request:
-    enabled: false
+    enabled: true
     instances: 2
     timeout_seconds: 900
     max_attempts: 3
     command: .venv/bin/python
     args:
       - -m
-      - workers.reviewer_worker
+      - workers.github_reviewer_worker

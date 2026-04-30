@@ -218,6 +218,39 @@ class FilesystemWebhookStoreTestCase(unittest.TestCase):
 class WebhookApplicationTestCase(unittest.TestCase):
     """Unit tests for the testable webhook application core."""
 
+    def test_handle_jira_webhook_submits_orchestrator_event_when_connected(self):
+        """Orchestrator-hosted Jira webhooks should not enqueue legacy export jobs."""
+
+        class FakeOrchestrator:
+            def __init__(self):
+                self.events = []
+
+            def submit_jira_webhook(self, event):
+                self.events.append(event)
+                return "orchestrator-event-1"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = WebhookSettings(secret="secret", worker_enabled=True, use_orchestrator=True)
+            store = FilesystemWebhookStore(temp_dir, ttl_seconds=60)
+            orchestrator = FakeOrchestrator()
+            app = WebhookApplication(
+                settings=settings,
+                verifier=SecretVerifier("secret"),
+                parser=JiraWebhookParser("https://example.atlassian.net", settings.allowed_events),
+                store=store,
+                orchestrator=orchestrator,
+            )
+            body = json.dumps(jira_payload()).encode("utf-8")
+
+            response = app.handle_jira_webhook({"X-Sprinter-Webhook-Secret": "secret"}, body)
+
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.body["status"], "accepted")
+            self.assertEqual(response.body["workflow_id"], "SCRUM-1")
+            self.assertEqual(response.body["orchestrator_event_id"], "orchestrator-event-1")
+            self.assertEqual(orchestrator.events[0].issue_key, "SCRUM-1")
+            self.assertEqual(store.list_jobs(JobStatus.QUEUED), [])
+
     def test_handle_jira_webhook_enqueues_job_and_dedupes_retry(self):
         """Accepted webhook payloads should create one job despite retries."""
 

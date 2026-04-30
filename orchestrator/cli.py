@@ -44,7 +44,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "start":
         return run_loop(service)
     elif args.command == "status":
-        service.initialize()
+        service.initialize(start_webhooks=False)
         workflows = service.store.list_workflows()
         if args.json:
             import json
@@ -56,6 +56,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"  {w.workflow_id}: {w.status} (active_command: {w.active_command_id or 'none'})")
         return 0
     elif args.command == "workflow":
+        service.initialize(start_webhooks=False)
         state = service.get_workflow_state(args.workflow_id)
         if not state:
             print(f"Workflow not found: {args.workflow_id}")
@@ -69,18 +70,22 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"  {event.get('received_at')} - {event.get('event_type')}")
         return 0
     elif args.command == "submit-jira-created":
+        service.initialize(start_webhooks=False)
         event_id = service.submit_jira_created(args.workflow_id, args.url)
         print(f"Submitted event: {event_id}")
         return 0
     elif args.command == "retry":
+        service.initialize(start_webhooks=False)
         service.retry_workflow(args.workflow_id)
         print(f"Retry requested for: {args.workflow_id}")
         return 0
     elif args.command == "pause":
+        service.initialize(start_webhooks=False)
         service.pause_workflow(args.workflow_id)
         print(f"Paused: {args.workflow_id}")
         return 0
     elif args.command == "resume":
+        service.initialize(start_webhooks=False)
         service.resume_workflow(args.workflow_id)
         print(f"Resumed: {args.workflow_id}")
         return 0
@@ -91,16 +96,18 @@ def main(argv: Optional[list[str]] = None) -> int:
 def run_loop(service: OrchestratorService) -> int:
     service.initialize()
     logger.info("Starting orchestrator event loop and dispatcher")
+    stop_requested = False
 
     def handle_sigterm(*_):
+        nonlocal stop_requested
         logger.info("Shutdown requested")
-        sys.exit(0)
+        stop_requested = True
 
     signal.signal(signal.SIGTERM, handle_sigterm)
     signal.signal(signal.SIGINT, handle_sigterm)
 
     try:
-        while True:
+        while not stop_requested:
             processed = service.process_pending_events(limit=10)
             dispatched = service.dispatcher.dispatch_all_workers()
             if not processed and not dispatched:
@@ -108,4 +115,9 @@ def run_loop(service: OrchestratorService) -> int:
     except Exception:
         logger.exception("Orchestrator loop crashed")
         return 1
+    finally:
+        service.shutdown()
     return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -100,6 +101,7 @@ class OrchestratorStore:
         # Move from pending to running
         source = self.commands_root / safe_filename(command.command_type) / CommandStatus.PENDING.value / f"{safe_filename(command.command_id)}.json"
         target = self.commands_root / safe_filename(command.command_type) / CommandStatus.RUNNING.value / f"{safe_filename(command.command_id)}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source, target)
         
         # Update workflow active command
@@ -115,11 +117,13 @@ class OrchestratorStore:
         
         from orchestrator.models import CommandLease, utc_now_iso
         now = utc_now_iso()
-        return CommandLease(command.command_id, command.workflow_id, now, now)
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=timeout)).isoformat().replace("+00:00", "Z")
+        return CommandLease(command.command_id, command.workflow_id, now, expires_at)
 
     def mark_command_completed(self, command: OrchestratorCommand, result: dict):
         source = self.commands_root / safe_filename(command.command_type) / CommandStatus.RUNNING.value / f"{safe_filename(command.command_id)}.json"
         target = self.commands_root / safe_filename(command.command_type) / CommandStatus.COMPLETED.value / f"{safe_filename(command.command_id)}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
         if source.exists():
             os.replace(source, target)
         
@@ -131,6 +135,7 @@ class OrchestratorStore:
     def mark_command_failed(self, command: OrchestratorCommand, error: str):
         source = self.commands_root / safe_filename(command.command_type) / CommandStatus.RUNNING.value / f"{safe_filename(command.command_id)}.json"
         target = self.commands_root / safe_filename(command.command_type) / CommandStatus.FAILED.value / f"{safe_filename(command.command_id)}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
         if source.exists():
             os.replace(source, target)
 
@@ -138,6 +143,34 @@ class OrchestratorStore:
         if state and state.active_command_id == command.command_id:
             new_state = WorkflowState(state.workflow_id, state.status, active_command_id=None, history=state.history)
             self.save_workflow_state(new_state)
+
+    def read_command(
+        self,
+        command_type: str,
+        command_id: str,
+        status: CommandStatus,
+    ) -> Optional[dict[str, Any]]:
+        path = (
+            self.commands_root
+            / safe_filename(command_type)
+            / status.value
+            / f"{safe_filename(command_id)}.json"
+        )
+        if not path.exists():
+            return None
+        return read_json(path)
+
+    def read_workflow_history(self, workflow_id: str) -> list[dict[str, Any]]:
+        events = []
+        for status in EventStatus:
+            event_dir = self.events_root / status.value
+            if not event_dir.exists():
+                continue
+            for path in sorted(event_dir.glob("*.json")):
+                data = read_json(path)
+                if data.get("workflow_id") == workflow_id:
+                    events.append(data)
+        return sorted(events, key=lambda event: event.get("received_at", ""))
 
     def list_workflows(self) -> list[WorkflowState]:
         states = []

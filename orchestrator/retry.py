@@ -45,13 +45,14 @@ class RetryManager:
         decision = self.decide(command, failed_event.received_at)
         if not decision.should_retry or decision.next_attempt is None or decision.available_at is None:
             raise ValueError("Retry not allowed")
+        policy = self.for_command(command)
         return OrchestratorCommand.new(
             command_type=command.command_type,
             workflow_id=command.workflow_id,
             payload=command.payload,
             caused_by_event_id=failed_event.event_id,
             attempt=decision.next_attempt,
-            max_attempts=command.max_attempts,
+            max_attempts=policy.max_attempts,
             retry_of=command.command_id,
             available_at=decision.available_at,
         )
