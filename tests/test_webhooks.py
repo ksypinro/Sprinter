@@ -53,10 +53,27 @@ def webhook_event(event_id="evt-1"):
 class WebhookSettingsTestCase(unittest.TestCase):
     """Unit tests for webhook settings parsing."""
 
-    def test_from_env_reads_package_config_secret_by_default(self):
-        """The package webhook config should provide startup defaults."""
+    def test_from_env_reads_settings_file_secret_by_default(self):
+        """The webhook config file should provide startup defaults."""
 
-        settings = WebhookSettings.from_env({})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = os.path.join(temp_dir, "webhook.yaml")
+            with open(settings_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+server:
+  jira_path: "/webhooks/jira"
+auth:
+  secret: "change-me-local-webhook-secret"
+events:
+  allowed_events:
+    - "jira:issue_deleted"
+    - "attachment_created"
+    - "issue_property_deleted"
+"""
+                )
+
+            settings = WebhookSettings.from_env({"SPRINTER_WEBHOOK_SETTINGS_FILE": settings_path})
 
         self.assertEqual(settings.secret, "change-me-local-webhook-secret")
         self.assertEqual(settings.jira_path, "/webhooks/jira")

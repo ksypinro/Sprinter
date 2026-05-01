@@ -10,7 +10,8 @@ Bootstraps the entire Sprinter development environment:
   6. Validates that critical env vars are set
   7. Checks for external CLI tools (ngrok, codex, git)
   8. Initializes the orchestrator storage directory
-  9. Prints a summary of what's ready and what still needs action
+  9. Ensures orchestrator-owned Jira/GitHub webhook servers auto-start
+ 10. Prints a summary of what's ready and what still needs action
 
 Usage:
     python3 systemSetup.py
@@ -31,6 +32,7 @@ VENV_DIR = REPO_ROOT / ".venv"
 REQUIREMENTS_FILE = REPO_ROOT / "requirements.txt"
 ENV_FILE = REPO_ROOT / ".env"
 CONFIG_FILE = REPO_ROOT / "config.yaml"
+ORCHESTRATOR_CONFIG_FILE = REPO_ROOT / "orchestrator" / "config.yaml"
 ORCHESTRATOR_STORAGE = REPO_ROOT / "exports" / ".orchestrator"
 
 MIN_PYTHON = (3, 10)
@@ -125,8 +127,27 @@ storage:
   export_path: "exports"
   download_attachments: true
   include_confluence_descendants: true
-  confluence_descendant_depth: 5
+confluence_descendant_depth: 5
 '''
+
+DEFAULT_WEBHOOK_SERVER_CONFIG = {
+    "auto_start": True,
+    "jira": {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 8090,
+        "path": "/webhooks/jira",
+        "config_path": "config.yaml",
+        "store_path": None,
+    },
+    "github": {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 8091,
+        "path": "/webhooks/github",
+        "store_path": "exports/.github_webhooks",
+    },
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -353,6 +374,47 @@ def initialize_orchestrator_storage() -> bool:
     return True
 
 
+def ensure_orchestrator_webhook_autostart() -> bool:
+    """Step 9: Ensure the orchestrator starts both webhook servers."""
+
+    step(9, "Checking orchestrator webhook auto-start")
+
+    try:
+        import yaml
+    except ImportError:
+        error("PyYAML is required to update orchestrator/config.yaml")
+        return False
+
+    try:
+        if ORCHESTRATOR_CONFIG_FILE.exists():
+            data = yaml.safe_load(ORCHESTRATOR_CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        else:
+            data = {}
+    except (OSError, yaml.YAMLError) as exc:
+        error(f"Could not read {ORCHESTRATOR_CONFIG_FILE}: {exc}")
+        return False
+
+    if not isinstance(data, dict):
+        error(f"{ORCHESTRATOR_CONFIG_FILE} must contain a YAML object")
+        return False
+
+    changed = _ensure_webhook_server_config(data)
+
+    if not changed:
+        success("Orchestrator already auto-starts Jira and GitHub webhook servers")
+        return True
+
+    try:
+        ORCHESTRATOR_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ORCHESTRATOR_CONFIG_FILE.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    except OSError as exc:
+        error(f"Could not write {ORCHESTRATOR_CONFIG_FILE}: {exc}")
+        return False
+
+    success("Updated orchestrator/config.yaml to auto-start Jira and GitHub webhook servers")
+    return True
+
+
 def ensure_gitignore() -> None:
     """Make sure .env is in .gitignore."""
     gitignore_path = REPO_ROOT / ".gitignore"
@@ -367,6 +429,47 @@ def ensure_gitignore() -> None:
         success("Created .gitignore with .env entry")
 
 
+def _ensure_webhook_server_config(data: dict) -> bool:
+    """Populate missing webhook server settings needed by the orchestrator."""
+
+    changed = False
+    servers = data.get("webhook_servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        data["webhook_servers"] = servers
+        changed = True
+
+    if servers.get("auto_start") is not True:
+        servers["auto_start"] = True
+        changed = True
+
+    changed = _ensure_webhook_section(servers, "jira", DEFAULT_WEBHOOK_SERVER_CONFIG["jira"]) or changed
+    changed = _ensure_webhook_section(servers, "github", DEFAULT_WEBHOOK_SERVER_CONFIG["github"]) or changed
+    return changed
+
+
+def _ensure_webhook_section(servers: dict, name: str, defaults: dict) -> bool:
+    """Ensure one webhook server section is present and enabled."""
+
+    section = servers.get(name)
+    if not isinstance(section, dict):
+        servers[name] = dict(defaults)
+        return True
+
+    changed = False
+    if section.get("enabled") is not True:
+        section["enabled"] = True
+        changed = True
+
+    for key, value in defaults.items():
+        if key == "enabled":
+            continue
+        if key not in section:
+            section[key] = value
+            changed = True
+    return changed
+
+
 def print_summary(
     python_ok: bool,
     venv_ok: bool,
@@ -378,8 +481,9 @@ def print_summary(
     tools_found: int,
     tools_missing: int,
     storage_ok: bool,
+    webhook_autostart_ok: bool,
 ) -> None:
-    """Step 9: Print final summary."""
+    """Step 10: Print final summary."""
     banner("Setup Summary")
 
     items = [
@@ -389,6 +493,7 @@ def print_summary(
         (".env template", env_ok),
         ("config.yaml", config_ok),
         ("Orchestrator storage", storage_ok),
+        ("Webhook auto-start config", webhook_autostart_ok),
     ]
 
     all_ok = True
@@ -417,6 +522,8 @@ def print_summary(
         info("Start the orchestrator:")
         print(f"    source .env")
         print(f"    .venv/bin/python -m orchestrator start")
+        print()
+        info("The orchestrator auto-starts local Jira and GitHub webhook servers when it starts.")
         print()
         info("Register webhooks (in a separate terminal):")
         print(f"    source .env")
@@ -454,10 +561,11 @@ def main() -> int:
     env_set, env_missing = validate_env_vars()
     tools_found, tools_missing = check_external_tools()
     storage_ok = initialize_orchestrator_storage()
+    webhook_autostart_ok = ensure_orchestrator_webhook_autostart()
 
     print_summary(
         python_ok, venv_ok, deps_ok, env_ok, config_ok,
-        env_set, env_missing, tools_found, tools_missing, storage_ok,
+        env_set, env_missing, tools_found, tools_missing, storage_ok, webhook_autostart_ok,
     )
 
     return 0
