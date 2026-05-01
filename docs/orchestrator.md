@@ -270,6 +270,8 @@ orchestrator:
   event_poll_interval_seconds: 1.0
   command_poll_interval_seconds: 1.0
   default_max_attempts: 3
+  log_level: INFO
+  log_file: exports/.orchestrator/logs/orchestrator.log
   default_retry_backoff_seconds:
     - 10
     - 30
@@ -306,6 +308,16 @@ safety:
 ```
 
 That leaves export and analysis automated while keeping implementation, PR creation, and review manual.
+
+## Logging
+
+The orchestrator configures Sprinter's shared logger on startup from `orchestrator.log_level` and `orchestrator.log_file`. The default log file is:
+
+```text
+exports/.orchestrator/logs/orchestrator.log
+```
+
+Parent directories are created automatically. Worker subprocess stdout and stderr continue to be captured separately as `logs/<command_id>.stdout.log` and `logs/<command_id>.stderr.log`, and those file handles are closed after each worker process completes.
 
 ## Webhook Servers
 

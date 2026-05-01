@@ -89,6 +89,7 @@ events:
                 "SPRINTER_WEBHOOK_SECRET": "shared-secret",
                 "SPRINTER_WEBHOOK_ALLOWED_EVENTS": "jira:issue_updated,comment_created",
                 "SPRINTER_WEBHOOK_ALLOWED_PROJECTS": "SCRUM,OPS",
+                "SPRINTER_WEBHOOK_LOG_FILE": "/tmp/sprinter-webhook.log",
                 "SPRINTER_WEBHOOK_WORKER_ENABLED": "false",
             }
         )
@@ -96,6 +97,7 @@ events:
         self.assertEqual(settings.secret, "shared-secret")
         self.assertEqual(settings.allowed_events, ("jira:issue_updated", "comment_created"))
         self.assertEqual(settings.allowed_projects, ("SCRUM", "OPS"))
+        self.assertEqual(settings.log_file, "/tmp/sprinter-webhook.log")
         self.assertFalse(settings.worker_enabled)
 
     def test_from_env_rejects_missing_secret(self):

@@ -46,22 +46,27 @@ class ProcessManager:
         args = [worker_settings.command] + list(worker_settings.args) + ["--payload", json.dumps(command.payload)]
         
         logger.info("Spawning worker: %s", " ".join(args))
-        
-        process = subprocess.Popen(
-            args,
-            cwd=self.settings.repo_root,
-            stdout=stdout_path.open("w"),
-            stderr=stderr_path.open("w"),
-            env={**os.environ, **env},
-        )
-        
-        self._running[cmd_key] = process
-        try:
-            # In a real system we would poll this process or use a thread to monitor it.
-            # For this implementation, we simulate the monitor in the next step.
-            self._monitor_process(command, lease, process, worker_settings, result_path, stdout_path, stderr_path)
-        finally:
-            self._running.pop(cmd_key, None)
+
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            stdout_path.open("w", encoding="utf-8") as stdout_handle,
+            stderr_path.open("w", encoding="utf-8") as stderr_handle,
+        ):
+            process = subprocess.Popen(
+                args,
+                cwd=self.settings.repo_root,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                env={**os.environ, **env},
+            )
+
+            self._running[cmd_key] = process
+            try:
+                # In a real system we would poll this process or use a thread to monitor it.
+                # For this implementation, we simulate the monitor in the next step.
+                self._monitor_process(command, lease, process, worker_settings, result_path, stdout_path, stderr_path)
+            finally:
+                self._running.pop(cmd_key, None)
 
     def _monitor_process(self, command, lease, process, worker_settings, result_path, stdout_path, stderr_path):
         """Wait for process completion and emit result event."""
