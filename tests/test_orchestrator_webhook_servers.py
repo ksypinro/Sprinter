@@ -31,6 +31,13 @@ class OrchestratorWebhookServerTestCase(unittest.TestCase):
             service = OrchestratorService(settings)
 
             with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "SPRINTER_WEBHOOK_SECRET": "test-jira-secret",
+                        "SPRINTER_GITHUB_WEBHOOK_SECRET": "test-github-secret",
+                    },
+                ),
                 patch("orchestrator.webhook_manager.create_webhook_server", return_value=FakeServer("jira", 18090)),
                 patch("orchestrator.webhook_manager.create_github_webhook_server", return_value=FakeServer("github", 18091)),
             ):
