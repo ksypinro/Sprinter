@@ -6,3 +6,5 @@ exports/
 config.yaml
 ticket.json
 scratch/
+
+.env

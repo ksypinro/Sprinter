@@ -37,17 +37,112 @@ The engine consumes those events and queues the next command when the configured
 
 ## Core Modules
 
-- `orchestrator.models`: event, command, workflow, worker-result, and retry data models.
-- `orchestrator.settings`: YAML-backed runtime settings from `orchestrator/config.yaml`.
-- `orchestrator.store`: filesystem storage for events, commands, workflow state, and worker logs.
-- `orchestrator.event_buffer`: writes and claims pending events.
-- `orchestrator.engine`: workflow state machine and command scheduling rules.
-- `orchestrator.dispatcher`: finds pending commands and dispatches workers by type.
-- `orchestrator.process_manager`: starts worker subprocesses, captures logs, reads result files, and emits worker result events.
-- `orchestrator.retry`: retry policy and delayed retry command creation.
-- `orchestrator.webhook_manager`: starts and stops orchestrator-owned Jira and GitHub webhook HTTP servers.
-- `orchestrator.service`: public API used by CLI and webhook integrations.
-- `orchestrator.cli`: command-line entrypoint.
+### `orchestrator.models`
+Data models for the entire orchestration system:
+- `OrchestratorEvent` — immutable event with type, workflow ID, and payload. Factory method `OrchestratorEvent.new()` auto-generates UUIDs and timestamps.
+- `OrchestratorCommand` — immutable command with type, workflow ID, payload, attempt tracking, and retry metadata.
+- `WorkflowState` — tracks current `WorkflowStatus`, active command ID, and history.
+- `WorkerResult` — result written by workers; includes success flag, return code, artifacts dict, and error string. Contains `.to_event()` to convert into a `worker.command_succeeded` or `worker.command_failed` event.
+- `RetryPolicy` — configurable max attempts and exponential backoff.
+- `EventType`, `EventStatus`, `CommandStatus`, `WorkflowStatus` — string enums.
+
+### `orchestrator.settings`
+Loads all configuration from `orchestrator/config.yaml`:
+- `OrchestratorSettings` — top-level settings including `repo_root`, `storage_root`, `exports_root`, polling intervals, retry backoff, log level, safety flags, worker definitions, and webhook server settings.
+- `SafetySettings` — boolean gates for each automation stage (export, analyze, execute, PR, review).
+- `WorkerSettings` — per-worker-type config: instances, timeout, max attempts, command and args.
+- `WebhookServerSettings` — auto-start flag, Jira and GitHub server host/port/path.
+- `OrchestratorSettings.from_env()` reads the YAML file from `<cwd>/orchestrator/config.yaml`.
+
+### `orchestrator.store`
+Filesystem-backed durable storage. All state is written as JSON files under the `storage_root`:
+- Events flow through: `pending/` → `processing/` → `completed/` or `failed/`
+- Commands flow through: `<command_type>/pending/` → `running/` → `completed/` or `failed/`
+- Workflow state is stored at: `workflows/<workflow_id>/state.json`
+- Worker logs are stored at: `logs/<command_id>.{stdout,stderr}.log` and `logs/<command_id>.result.json`
+- The store is restart-friendly — pending events and commands survive process restarts.
+
+### `orchestrator.event_buffer`
+Thin layer on top of the store that provides `submit(event)` and `poll()` methods. `submit` writes the event to `pending/`; `poll` atomically moves one event from `pending/` to `processing/`.
+
+### `orchestrator.engine`
+The `WorkflowEngine` is the state machine. Its `process_event()` method:
+1. Loads the workflow state from disk (or creates it for external trigger events).
+2. Skips events for paused workflows (unless it's a resume event).
+3. Routes by `EventType` to internal handlers.
+4. On `JIRA_ISSUE_CREATED` → queues `export_jira_issue` command.
+5. On `WORKER_COMMAND_SUCCEEDED` → advances workflow status and queues the next command (gated by safety flags).
+6. On `WORKER_COMMAND_FAILED` → delegates to `RetryManager` to decide retry vs block.
+7. On `PAUSE_REQUESTED` / `RESUME_REQUESTED` → updates workflow status.
+8. On GitHub events → queues `review_pull_request` when review automation is enabled.
+
+### `orchestrator.dispatcher`
+The `Dispatcher` polls pending commands for each worker type and dispatches them:
+1. Checks if the worker type is enabled and has available capacity (instances − running count).
+2. Filters commands by `is_available()` (respects retry backoff delays).
+3. Checks that the workflow's `active_command_id` doesn't conflict (prevents overlapping work).
+4. Claims the command via the store and tells the `ProcessManager` to start a subprocess.
+
+### `orchestrator.process_manager`
+The `ProcessManager` spawns and monitors worker subprocesses:
+1. Sets environment variables (`SPRINTER_WORKER_*`, `PYTHONPATH`).
+2. Launches the subprocess with stdout/stderr redirected to log files.
+3. Waits for the process to complete (with timeout from `WorkerSettings`).
+4. Reads the `WorkerResult` JSON from the result file.
+5. Marks the command as completed or failed in the store.
+6. Emits a `worker.command_succeeded` or `worker.command_failed` event.
+
+### `orchestrator.retry`
+The `RetryManager` uses `RetryPolicy` to decide whether a failed command should be retried:
+- Compares the command's `attempt` against `max_attempts`.
+- Calculates a `delay_for_attempt` using the backoff schedule (default: 10s, 30s, 90s).
+- If retryable, builds a new `OrchestratorCommand` with incremented attempt and a future `available_at`.
+- If not retryable, the engine marks the workflow as `blocked`.
+
+### `orchestrator.webhook_manager`
+`WebhookServerManager` owns the lifecycle of orchestrator-started webhook HTTP servers:
+- Creates `ManagedWebhookServer` instances for Jira and GitHub.
+- Each server runs in a daemon thread (`ThreadingHTTPServer.serve_forever()`).
+- The Jira server is wired to forward accepted events to `orchestrator.submit_jira_webhook()`.
+- The GitHub server is wired to forward normalized events to `orchestrator.submit_event()`.
+- On shutdown, both servers are stopped and threads are joined.
+
+### `orchestrator.service`
+`OrchestratorService` is the public API facade used by the CLI, MCP server, and webhook integrations:
+- `initialize()` — creates storage directories and optionally starts webhook servers.
+- `submit_jira_created()` / `submit_jira_webhook()` / `submit_event()` — event submission.
+- `process_pending_events()` — polls and processes events through the engine.
+- `pause_workflow()` / `resume_workflow()` / `retry_workflow()` — control commands.
+- `get_workflow_state()` — read workflow status.
+- `shutdown()` — stops webhook servers.
+
+### `orchestrator.cli`
+Command-line entrypoint (`python -m orchestrator <command>`):
+- `start` — runs the event loop and dispatcher.
+- `status` — shows all workflows (text or JSON).
+- `workflow <id>` — shows one workflow with optional `--history`.
+- `submit-jira-created <id>` — manually injects a `jira.issue.created` event.
+- `retry`, `pause`, `resume` — workflow control.
+
+### How the Event Loop Works
+
+```text
+┌─────────────────────────────────────────┐
+│           orchestrator start            │
+│                                         │
+│  1. initialize() → create storage dirs  │
+│  2. start_webhooks() → daemon threads   │
+│  3. Event loop:                         │
+│     a. process_pending_events(10)       │
+│        → engine.process_event(event)    │
+│        → may enqueue new commands       │
+│     b. dispatcher.dispatch_all_workers()│
+│        → pm.start_worker(command)       │
+│        → subprocess runs, result event  │
+│     c. sleep if idle                    │
+│  4. On SIGINT/SIGTERM → shutdown()      │
+└─────────────────────────────────────────┘
+```
 
 ## Storage Layout
 

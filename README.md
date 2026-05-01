@@ -1,152 +1,440 @@
 # Sprinter
 
-A toolkit for local Jira/Confluence extraction, Codex analysis, Codex implementation, and automated orchestration.
+**An AI-powered development automation toolkit** that connects Jira, Codex, and GitHub into a fully automated pipeline — from issue creation to pull request review.
 
-Sprinter provides a durable orchestration engine that seamlessly connects Atlassian integrations with OpenAI Codex to fully automate your development workflows—from issue creation to pull request review.
+Sprinter provides a durable orchestration engine, MCP servers for LLM integration, webhook listeners for real-time event processing, and a suite of specialized workers that handle each stage of the development lifecycle.
 
-## Architecture & Workflow Engine
-
-Sprinter is driven by a durable event and command engine called the **Orchestrator**. It handles multi-step workflows automatically without losing state, ensuring every action is recorded and can be retried or inspected.
-
-The default Jira-to-GitHub automated flow looks like this:
+## Architecture
 
 ```mermaid
 flowchart TD
-  A["Jira Webhook (issue_created)"] --> B["jira.issue.created event"]
-  B --> C["Export Jira Issue"]
-  C --> D["Analyze Issue (Codex)"]
-  D --> E["Execute Plan (Codex)"]
-  E --> F["Create GitHub PR"]
-  F --> G["Review PR"]
+  subgraph External Services
+    Jira["Jira Cloud"]
+    GitHub["GitHub"]
+    Codex["Codex CLI"]
+  end
 
-  H["GitHub Webhook (push/pr event)"] --> G
+  subgraph Orchestrator
+    Engine["Workflow Engine"]
+    Dispatcher["Dispatcher"]
+    PM["Process Manager"]
+    Store["Filesystem Store"]
+  end
+
+  subgraph Webhook Servers
+    JWS["Jira Webhook :8090"]
+    GWS["GitHub Webhook :8091"]
+  end
+
+  subgraph Workers
+    W1["Export Jira Issue"]
+    W2["Analyze Issue"]
+    W3["Execute Plan"]
+    W4["Create Pull Request"]
+    W5["Review Pull Request"]
+  end
+
+  subgraph MCP Servers
+    MCP1["MCPJira (stdio)"]
+    MCP2["JiraSSEMCP (SSE)"]
+    MCP3["JiraStreamableMCP (HTTP)"]
+    MCP4["OrchestratorMCP (stdio)"]
+  end
+
+  Jira -->|webhook| JWS --> Engine
+  GitHub -->|webhook| GWS --> Engine
+  Engine --> Dispatcher --> PM
+  PM --> W1 & W2 & W3 & W4 & W5
+  W1 -->|export| Store
+  W2 -->|analyze| Codex
+  W3 -->|implement| Codex
+  W4 -->|push & PR| GitHub
+  W5 -->|review| Codex
+  W5 -->|comment| GitHub
 ```
 
-For a detailed visual overview, view the [Architectural Documentation](architecture.html) (open the HTML file in your browser).
+### End-to-End Pipeline
 
-## Installation & Prerequisites
+When a Jira issue is created, the orchestrator automatically executes this workflow:
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url>
-   cd Sprinter
-   ```
+```text
+Jira Issue Created
+  → Export Jira Issue (download issue, comments, attachments, Confluence pages)
+  → Analyze Issue (Codex CLI read-only analysis → analysis_and_plan.md)
+  → Execute Plan (Codex CLI workspace-write → code changes + commit_log.md)
+  → Create Pull Request (git branch, commit, push, open draft PR)
+  → Review Pull Request (Codex CLI read-only review → PR comment)
+```
 
-2. **Set up a Python virtual environment:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+Each stage is gated by configurable safety flags, so you can automate the full pipeline or stop at any point for manual review.
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-4. **Required External Dependencies:**
-   - [ngrok](https://ngrok.com/) installed locally (if you need public webhooks for Jira/GitHub).
-   - Codex CLI configured and authenticated.
+## Quick Start
 
-## Configuration
+### 1. Set Up the Environment
 
-Before starting the orchestrator, you must configure credentials and paths. It is highly recommended to use environment variables to avoid hardcoding sensitive information.
+Run the setup script to bootstrap everything:
 
-1. **Environment Variables:**
-   You can provide the following environment variables (e.g., via a `.env` file or export them directly):
-   - `ATLASSIAN_EMAIL`: Your Jira/Confluence login email.
-   - `ATLASSIAN_API_TOKEN`: Your Atlassian API token.
-   - `SPRINTER_GITHUB_TOKEN`: GitHub personal access token (with repo scopes).
-   - `SPRINTER_GITHUB_OWNER`: GitHub username or organization name.
-   - `SPRINTER_GITHUB_REPO`: Target GitHub repository name.
-   - `SPRINTER_WEBHOOK_SECRET`: Secure secret for validating incoming webhooks.
-   - `NGROK_AUTHTOKEN`: Your ngrok authentication token.
+```bash
+python3 systemSetup.py
+```
 
-2. **Configuration Files:**
-   The project uses several YAML files for specific component configurations. Ensure they are correctly set up (they now safely rely on the environment variables mentioned above):
-   - `config.yaml`: Core Atlassian integration settings.
-   - `webhooks/config.yaml`: Jira Webhook server configuration.
-   - `webhooks/ngrok_config.yaml`: Jira Webhook ngrok setup.
-   - `github_webhooks/ngrok_config.yaml`: GitHub Webhook ngrok setup.
-   - `orchestrator/config.yaml`: Controls automation safety flags (e.g., gating PR creation or execution) and worker limits.
+This will:
+- Create a Python virtual environment (`.venv`)
+- Install all dependencies
+- Generate a `.env` template with all required variables
+- Create `config.yaml` from the example template
+- Validate your environment
+- Check for external tools (ngrok, codex, git)
 
-## Setting up the Orchestrator & Webhooks
+### 2. Configure Environment Variables
 
-The orchestrator manages the entire lifecycle, including starting the local HTTP webhook listeners for Jira and GitHub.
+Edit the generated `.env` file with your actual credentials:
 
-### 1. Start the Orchestrator
+```bash
+# Required — Atlassian
+ATLASSIAN_EMAIL=your-email@example.com
+ATLASSIAN_API_TOKEN=your-atlassian-api-token
+
+# Required — GitHub
+SPRINTER_GITHUB_TOKEN=your-github-personal-access-token
+SPRINTER_GITHUB_OWNER=your-github-org-or-username
+SPRINTER_GITHUB_REPO=your-repository-name
+
+# Required — Webhook Security
+SPRINTER_WEBHOOK_SECRET=a-secure-random-string
+SPRINTER_GITHUB_WEBHOOK_SECRET=another-secure-random-string
+
+# Required — ngrok (for public webhook URLs)
+NGROK_AUTHTOKEN=your-ngrok-auth-token
+```
+
+Then source it:
+```bash
+source .env
+```
+
+### 3. Start the Orchestrator
 
 ```bash
 .venv/bin/python -m orchestrator start
 ```
 
-By default, this command automatically starts:
-- The Jira webhook server on `http://127.0.0.1:8090/webhooks/jira`
-- The GitHub webhook server on `http://127.0.0.1:8091/webhooks/github`
+This automatically starts:
+- The **Jira webhook server** on `http://127.0.0.1:8090/webhooks/jira`
+- The **GitHub webhook server** on `http://127.0.0.1:8091/webhooks/github`
+- The **event loop** that processes events and dispatches workers
 
-### 2. Register Webhooks with Jira and GitHub
+### 4. Register Webhooks
 
-To expose your local webhook servers to the internet so Jira and GitHub can reach them, you can use the built-in ngrok setup scripts.
+In a separate terminal, register your webhook URLs with Jira and GitHub via ngrok:
 
-**For Jira:**
 ```bash
-# Registers the webhook in your Jira project using the NGROK_AUTHTOKEN
+# Register Jira webhook
+source .env
 .venv/bin/python -m webhooks.setup
-```
 
-**For GitHub:**
-```bash
-# Registers the webhook in your GitHub repo using the NGROK_AUTHTOKEN
+# Register GitHub webhook
 .venv/bin/python -m github_webhooks.setup
 ```
 
+### 5. Trigger a Workflow
+
+Either create a Jira issue (the webhook will trigger automatically), or submit manually:
+
+```bash
+.venv/bin/python -m orchestrator submit-jira-created SCRUM-123 \
+  --url "https://your-site.atlassian.net/browse/SCRUM-123"
+```
+
+### 6. Monitor Progress
+
+```bash
+# Global status
+.venv/bin/python -m orchestrator status
+
+# Specific workflow with history
+.venv/bin/python -m orchestrator workflow SCRUM-123 --history
+```
+
+---
+
+## Installation (Manual)
+
+If you prefer to set up manually instead of using `systemSetup.py`:
+
+```bash
+git clone <repository-url>
+cd Sprinter
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Prerequisites
+
+| Tool | Required For | Install |
+|---|---|---|
+| Python 3.10+ | Everything | System package manager |
+| ngrok | Public webhook URLs | [ngrok.com](https://ngrok.com/) |
+| Codex CLI | Analysis and implementation | OpenAI Codex |
+| Git | PR creation and pushing | System package manager |
+
+---
+
+## Configuration Reference
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `ATLASSIAN_EMAIL` | Yes | Jira/Confluence login email |
+| `ATLASSIAN_API_TOKEN` | Yes | Atlassian API token |
+| `SPRINTER_GITHUB_TOKEN` | Yes | GitHub personal access token (repo scope) |
+| `SPRINTER_GITHUB_OWNER` | Yes | GitHub username or organization |
+| `SPRINTER_GITHUB_REPO` | Yes | Target GitHub repository |
+| `SPRINTER_WEBHOOK_SECRET` | Yes | Secret for Jira webhook authentication |
+| `SPRINTER_GITHUB_WEBHOOK_SECRET` | Yes | Secret for GitHub webhook signature verification |
+| `NGROK_AUTHTOKEN` | Yes* | ngrok authentication token (*if using public webhooks) |
+| `SPRINTER_GITHUB_BASE_BRANCH` | No | Base branch for PRs (default: `main`) |
+| `SPRINTER_GITHUB_BRANCH_PREFIX` | No | Branch prefix for PRs (default: `sprinter/`) |
+| `SPRINTER_GITHUB_DRAFT_PR` | No | Create PRs as draft (default: `true`) |
+
+### Configuration Files
+
+| File | Purpose |
+|---|---|
+| `config.yaml` | Core Atlassian credentials and export settings |
+| `orchestrator/config.yaml` | Orchestrator settings, safety flags, worker config, webhook servers |
+| `webhooks/config.yaml` | Jira webhook server settings |
+| `webhooks/ngrok_config.yaml` | Jira ngrok setup script settings |
+| `github_webhooks/ngrok_config.yaml` | GitHub ngrok setup script settings |
+| `codex_analysis/config.yaml` | Codex analyzer settings |
+| `codex_implementer/config.yaml` | Codex implementer settings |
+
+### Safety Flags
+
+Control which pipeline stages run automatically in `orchestrator/config.yaml`:
+
+```yaml
+safety:
+  auto_export_after_issue_created: true    # Export when Jira issue is created
+  auto_analyze_after_export: true          # Run Codex analysis after export
+  auto_execute_after_plan: true            # Apply code changes after analysis
+  auto_create_pr_after_execution: true     # Open PR after implementation
+  auto_review_after_pr: true               # Post Codex review on PR
+```
+
+Set any flag to `false` to gate that stage for manual approval.
+
+---
+
 ## Managing Workflows (CLI)
 
-The orchestrator includes a CLI for monitoring and controlling automated workflows.
+```bash
+# Show all workflow states
+.venv/bin/python -m orchestrator status
+.venv/bin/python -m orchestrator status --json
 
-- **Check Global Status:**
-  ```bash
-  .venv/bin/python -m orchestrator status
-  ```
+# Inspect a specific workflow with event history
+.venv/bin/python -m orchestrator workflow SCRUM-123 --history
 
-- **Inspect a Specific Workflow:**
-  ```bash
-  .venv/bin/python -m orchestrator workflow SCRUM-123 --history
-  ```
+# Manually trigger a workflow
+.venv/bin/python -m orchestrator submit-jira-created SCRUM-123 \
+  --url "https://example.atlassian.net/browse/SCRUM-123"
 
-- **Manually Trigger a Workflow:**
-  ```bash
-  .venv/bin/python -m orchestrator submit-jira-created SCRUM-123 --url "https://example.atlassian.net/browse/SCRUM-123"
-  ```
+# Control a workflow
+.venv/bin/python -m orchestrator pause SCRUM-123
+.venv/bin/python -m orchestrator resume SCRUM-123
+.venv/bin/python -m orchestrator retry SCRUM-123
+```
 
-- **Control Workflow Execution:**
-  ```bash
-  .venv/bin/python -m orchestrator pause SCRUM-123
-  .venv/bin/python -m orchestrator resume SCRUM-123
-  .venv/bin/python -m orchestrator retry SCRUM-123
-  ```
+---
 
-## Component Deep Dives
+## Components
 
-For detailed documentation on specific parts of the Sprinter toolkit, see the following guides in the `docs/` directory:
+### Orchestrator
 
-- [Orchestrator Deep Dive](docs/orchestrator.md)
-- [Codex Analyzer](docs/codex_analysis.md)
-- [Codex Implementer](docs/codex_implementer.md)
-- [GitHub Workers](docs/github_workers.md)
+The durable event-driven workflow engine. Manages the state machine, dispatches workers, handles retries, and auto-starts webhook servers.
 
-*Note: MCP servers (Model Context Protocol) like `MCPJira`, `JiraWebhookMCP`, `JiraSSEMCP`, and `OrchestratorMCP` are also available as part of this toolkit for direct LLM integration.*
+→ [Orchestrator Deep Dive](docs/orchestrator.md)
+
+### Workers
+
+Subprocess units dispatched by the orchestrator for each pipeline stage:
+
+| Worker | Command Type | Module |
+|---|---|---|
+| Export Jira Issue | `export_jira_issue` | `workers.export_jira_worker` |
+| Analyze Issue | `analyze_issue` | `workers.planner_worker` |
+| Execute Plan | `execute_plan` | `workers.implementer_worker` |
+| Create Pull Request | `create_pull_request` | `workers.github_pusher_worker` |
+| Review Pull Request | `review_pull_request` | `workers.github_reviewer_worker` |
+
+→ [Workers Documentation](docs/workers.md)
+
+### MCP Servers
+
+Model Context Protocol servers for LLM client integration:
+
+| Server | Transport | Purpose |
+|---|---|---|
+| MCPJira | stdio | Jira export/create tools |
+| JiraSSEMCP | SSE (HTTP) | Same tools, SSE transport |
+| JiraStreamableMCP | Streamable HTTP | Same tools, with CORS support |
+| OrchestratorMCP | stdio | Workflow management tools |
+
+→ [MCP Servers Documentation](docs/mcp_servers.md)
+
+### Webhook Servers
+
+HTTP servers that receive events from Jira and GitHub:
+
+| Server | Port | Events |
+|---|---|---|
+| Jira Webhook | 8090 | Issue created/updated/deleted, comments, attachments |
+| GitHub Webhook | 8091 | Pull requests, pushes, review comments |
+
+→ [Webhook Servers Documentation](docs/webhook_servers.md)
+
+### Codex Analyzer
+
+Read-only planning stage that generates `analysis_and_plan.md`.
+
+→ [Codex Analyzer Documentation](docs/codex_analysis.md)
+
+### Codex Implementer
+
+Write-enabled stage that applies code changes and generates `commit_log.md`.
+
+→ [Codex Implementer Documentation](docs/codex_implementer.md)
+
+### GitHub Service
+
+Git operations, PR creation, and automated code review.
+
+→ [GitHub Workers Documentation](docs/github_workers.md)
+
+---
+
+## Full Orchestrator Setup Guide
+
+This is a complete, step-by-step walkthrough to get the entire Sprinter system running:
+
+### Step 1: Clone and Install
+
+```bash
+git clone <repository-url>
+cd Sprinter
+python3 systemSetup.py
+```
+
+### Step 2: Set Up Atlassian Credentials
+
+1. Go to [Atlassian API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+2. Create a new API token
+3. Add to `.env`:
+   ```
+   ATLASSIAN_EMAIL=your-email@example.com
+   ATLASSIAN_API_TOKEN=<paste-token-here>
+   ```
+
+### Step 3: Set Up GitHub Credentials
+
+1. Go to [GitHub Personal Access Tokens](https://github.com/settings/tokens)
+2. Create a token with `repo` scope
+3. Add to `.env`:
+   ```
+   SPRINTER_GITHUB_TOKEN=<paste-token-here>
+   SPRINTER_GITHUB_OWNER=your-org-or-username
+   SPRINTER_GITHUB_REPO=your-repo-name
+   ```
+
+### Step 4: Set Up ngrok
+
+1. Install ngrok: `brew install ngrok` (or download from [ngrok.com](https://ngrok.com/))
+2. Get your auth token from the [ngrok dashboard](https://dashboard.ngrok.com/)
+3. Add to `.env`:
+   ```
+   NGROK_AUTHTOKEN=<paste-token-here>
+   ```
+
+### Step 5: Generate Webhook Secrets
+
+```bash
+# Generate random secrets
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Add to `.env`:
+```
+SPRINTER_WEBHOOK_SECRET=<generated-secret-1>
+SPRINTER_GITHUB_WEBHOOK_SECRET=<generated-secret-2>
+```
+
+### Step 6: Configure Safety Flags
+
+Edit `orchestrator/config.yaml` to control automation level:
+
+```yaml
+safety:
+  auto_export_after_issue_created: true    # Always safe
+  auto_analyze_after_export: true          # Read-only, safe
+  auto_execute_after_plan: false           # ⚠️ Writes code — review plan first
+  auto_create_pr_after_execution: false    # Review changes first
+  auto_review_after_pr: true              # Read-only review, safe
+```
+
+### Step 7: Source Environment and Start
+
+```bash
+source .env
+.venv/bin/python -m orchestrator start
+```
+
+### Step 8: Register Webhooks (in a new terminal)
+
+```bash
+source .env
+.venv/bin/python -m webhooks.setup           # Register Jira webhook
+.venv/bin/python -m github_webhooks.setup     # Register GitHub webhook
+```
+
+### Step 9: Verify
+
+```bash
+# Check webhook server readiness
+curl http://127.0.0.1:8090/ready
+curl http://127.0.0.1:8091/ready
+
+# Check orchestrator status
+.venv/bin/python -m orchestrator status
+```
+
+---
 
 ## Testing
 
-To run the automated tests for the different components:
-
 ```bash
-# Run orchestrator and webhook tests
-.venv/bin/python -m unittest tests.test_orchestrator_implementation tests.test_orchestrator_github tests.test_orchestrator_webhook_servers -v
-
-# Run the full test suite
+# Full test suite
 .venv/bin/python -m unittest discover -s tests -v
+
+# Specific component tests
+.venv/bin/python -m unittest tests.test_main -v
+.venv/bin/python -m unittest tests.test_webhooks -v
+.venv/bin/python -m unittest tests.test_github_webhooks -v
+.venv/bin/python -m unittest tests.test_codex_analysis -v
+.venv/bin/python -m unittest tests.test_codex_implementer -v
+.venv/bin/python -m unittest tests.test_github_service -v
+.venv/bin/python -m unittest tests.test_orchestrator_implementation -v
+.venv/bin/python -m unittest tests.test_orchestrator_github -v
+.venv/bin/python -m unittest tests.test_orchestrator_webhook_servers -v
 ```
+
+## Architecture Documentation
+
+For a visual interactive overview, open `architecture.html` in your browser.
 
 ## License
 
