@@ -27,6 +27,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Iterable, Optional
+from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -752,7 +753,33 @@ def register_github_from_environment(public_webhook_url: str) -> str:
     settings = GitHubSettings.from_env()
     settings.require_webhook()
     secret = settings.webhook_secret or ""
-    return register_github_webhook(public_webhook_url, secret, load_setup_config(), GitHubHookClient(settings))
+    client = GitHubHookClient(settings)
+    delete_stale_ngrok_github_hooks(client, public_webhook_url)
+    return register_github_webhook(public_webhook_url, secret, load_setup_config(), client)
+
+
+def delete_stale_ngrok_github_hooks(client: object, public_webhook_url: str) -> list[str]:
+    """Delete stale ngrok GitHub hooks for the same webhook path."""
+
+    target_path = urlsplit(public_webhook_url).path
+    deleted: list[str] = []
+    for hook in client.list_hooks():
+        if hook.get("name") != "web":
+            continue
+        hook_config = hook.get("config") if isinstance(hook.get("config"), dict) else {}
+        hook_url = str(hook_config.get("url") or "")
+        parsed = urlsplit(hook_url)
+        if parsed.path != target_path:
+            continue
+        if hook_url != public_webhook_url and "ngrok" not in parsed.netloc:
+            continue
+        hook_id = hook.get("id")
+        if hook_id:
+            client.delete_hook(hook_id)
+            deleted.append(str(hook_id))
+    if deleted:
+        info(f"Deleted stale GitHub ngrok hooks for {target_path}: {', '.join(deleted)}")
+    return deleted
 
 
 def wait_for_json_status(
@@ -831,6 +858,16 @@ def stop_processes(processes: Iterable[subprocess.Popen]) -> None:
             process.wait(timeout=5)
 
 
+def validate_start_stack_tools() -> bool:
+    """Return whether all tools needed by --start-stack are available."""
+
+    missing = [tool for tool in ("git", "ngrok", "codex") if not which(tool)]
+    if missing:
+        error(f"--start-stack requires missing tools: {', '.join(missing)}")
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -862,6 +899,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.start_stack:
         if not all([python_ok, venv_ok, deps_ok, env_ok, config_ok, storage_ok, webhook_autostart_ok]) or env_missing > 0:
             error("Cannot start full stack until setup checks pass and all required environment variables are set.")
+            return 1
+        if not validate_start_stack_tools():
             return 1
         return start_full_stack(args.router_host, args.router_port)
 

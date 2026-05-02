@@ -87,6 +87,28 @@ class SystemSetupWebhookConfigTestCase(unittest.TestCase):
         self.assertIn("19090", script)
         self.assertIn("19091", script)
 
+    def test_delete_stale_ngrok_github_hooks_only_removes_matching_path(self):
+        class FakeHookClient:
+            def __init__(self):
+                self.deleted = []
+
+            def list_hooks(self):
+                return [
+                    {"id": 1, "name": "web", "config": {"url": "https://old.ngrok-free.dev/webhooks/github"}},
+                    {"id": 2, "name": "web", "config": {"url": "https://old.ngrok-free.dev/other"}},
+                    {"id": 3, "name": "web", "config": {"url": "https://example.com/webhooks/github"}},
+                ]
+
+            def delete_hook(self, hook_id):
+                self.deleted.append(hook_id)
+
+        client = FakeHookClient()
+
+        deleted = systemSetup.delete_stale_ngrok_github_hooks(client, "https://new.ngrok-free.dev/webhooks/github")
+
+        self.assertEqual(deleted, ["1"])
+        self.assertEqual(client.deleted, [1])
+
     def _run_with_config(self, config_path: Path) -> bool:
         old_path = systemSetup.ORCHESTRATOR_CONFIG_FILE
         systemSetup.ORCHESTRATOR_CONFIG_FILE = config_path
