@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional
 
 
 class GitCommandError(RuntimeError):
@@ -20,11 +22,12 @@ class GitCommandResult:
     stderr: str
 
 
-CommandRunner = Callable[[list[str], Path], GitCommandResult]
+CommandRunner = Callable[[list[str], Path, Optional[Mapping[str, str]]], GitCommandResult]
 
 
-def subprocess_runner(args: list[str], cwd: Path) -> GitCommandResult:
-    completed = subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=False)
+def subprocess_runner(args: list[str], cwd: Path, env: Optional[Mapping[str, str]] = None) -> GitCommandResult:
+    merged_env = {**os.environ, **env} if env else None
+    completed = subprocess.run(args, cwd=cwd, env=merged_env, text=True, capture_output=True, check=False)
     return GitCommandResult(args, completed.returncode, completed.stdout, completed.stderr)
 
 
@@ -35,8 +38,8 @@ class GitAdapter:
         self.repo_root = repo_root
         self.runner = runner or subprocess_runner
 
-    def run(self, *args: str) -> GitCommandResult:
-        result = self.runner(["git", *args], self.repo_root)
+    def run(self, *args: str, env: Optional[Mapping[str, str]] = None) -> GitCommandResult:
+        result = self.runner(["git", *args], self.repo_root, env)
         if result.returncode != 0:
             raise GitCommandError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
         return result
@@ -59,8 +62,40 @@ class GitAdapter:
     def commit(self, message: str, body: str) -> None:
         self.run("commit", "-m", message, "-m", body)
 
-    def push(self, remote: str, branch: str) -> None:
-        self.run("push", "-u", remote, branch)
+    def push(self, remote: str, branch: str, token: Optional[str] = None, username: str = "x-access-token") -> None:
+        if not token:
+            self.run("push", "-u", remote, branch)
+            return
+
+        with tempfile.TemporaryDirectory(prefix="sprinter-git-askpass-") as temp_dir:
+            askpass = Path(temp_dir) / "askpass.sh"
+            askpass.write_text(
+                "\n".join(
+                    [
+                        "#!/bin/sh",
+                        "case \"$1\" in",
+                        "  *Username*) printf '%s\\n' \"${SPRINTER_GIT_USERNAME:-x-access-token}\" ;;",
+                        "  *Password*) printf '%s\\n' \"$SPRINTER_GIT_TOKEN\" ;;",
+                        "  *) printf '\\n' ;;",
+                        "esac",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            askpass.chmod(0o700)
+            self.run(
+                "push",
+                "-u",
+                remote,
+                branch,
+                env={
+                    "GIT_ASKPASS": str(askpass),
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "SPRINTER_GIT_USERNAME": username,
+                    "SPRINTER_GIT_TOKEN": token,
+                },
+            )
 
     def head_sha(self) -> str:
         return self.run("rev-parse", "HEAD").stdout.strip()

@@ -4,6 +4,7 @@ import sys
 import time
 from typing import Optional
 
+from orchestrator.logging_utils import setup_logging
 from orchestrator.service import OrchestratorService
 from orchestrator.settings import OrchestratorSettings
 
@@ -39,59 +40,63 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv or sys.argv[1:])
 
     settings = OrchestratorSettings.from_env()
+    logging_manager = setup_logging(settings.log_level, settings.log_file, console=True)
     service = OrchestratorService(settings)
 
-    if args.command == "start":
-        return run_loop(service)
-    elif args.command == "status":
-        service.initialize(start_webhooks=False)
-        workflows = service.store.list_workflows()
-        if args.json:
+    try:
+        if args.command == "start":
+            return run_loop(service)
+        elif args.command == "status":
+            service.initialize(start_webhooks=False)
+            workflows = service.store.list_workflows()
+            if args.json:
+                import json
+                print(json.dumps([w.to_dict() for w in workflows], indent=2))
+            else:
+                print(f"Orchestrator Status ({settings.storage_root})")
+                print(f"Workflows: {len(workflows)}")
+                for w in workflows:
+                    print(f"  {w.workflow_id}: {w.status} (active_command: {w.active_command_id or 'none'})")
+            return 0
+        elif args.command == "workflow":
+            service.initialize(start_webhooks=False)
+            state = service.get_workflow_state(args.workflow_id)
+            if not state:
+                print(f"Workflow not found: {args.workflow_id}")
+                return 1
             import json
-            print(json.dumps([w.to_dict() for w in workflows], indent=2))
-        else:
-            print(f"Orchestrator Status ({settings.storage_root})")
-            print(f"Workflows: {len(workflows)}")
-            for w in workflows:
-                print(f"  {w.workflow_id}: {w.status} (active_command: {w.active_command_id or 'none'})")
-        return 0
-    elif args.command == "workflow":
-        service.initialize(start_webhooks=False)
-        state = service.get_workflow_state(args.workflow_id)
-        if not state:
-            print(f"Workflow not found: {args.workflow_id}")
-            return 1
-        import json
-        print(json.dumps(state.to_dict(), indent=2))
-        if args.history:
-            history = service.store.read_workflow_history(args.workflow_id)
-            print("\nHistory:")
-            for event in history:
-                print(f"  {event.get('received_at')} - {event.get('event_type')}")
-        return 0
-    elif args.command == "submit-jira-created":
-        service.initialize(start_webhooks=False)
-        event_id = service.submit_jira_created(args.workflow_id, args.url)
-        print(f"Submitted event: {event_id}")
-        return 0
-    elif args.command == "retry":
-        service.initialize(start_webhooks=False)
-        service.retry_workflow(args.workflow_id)
-        print(f"Retry requested for: {args.workflow_id}")
-        return 0
-    elif args.command == "pause":
-        service.initialize(start_webhooks=False)
-        service.pause_workflow(args.workflow_id)
-        print(f"Paused: {args.workflow_id}")
-        return 0
-    elif args.command == "resume":
-        service.initialize(start_webhooks=False)
-        service.resume_workflow(args.workflow_id)
-        print(f"Resumed: {args.workflow_id}")
-        return 0
+            print(json.dumps(state.to_dict(), indent=2))
+            if args.history:
+                history = service.store.read_workflow_history(args.workflow_id)
+                print("\nHistory:")
+                for event in history:
+                    print(f"  {event.get('received_at')} - {event.get('event_type')}")
+            return 0
+        elif args.command == "submit-jira-created":
+            service.initialize(start_webhooks=False)
+            event_id = service.submit_jira_created(args.workflow_id, args.url)
+            print(f"Submitted event: {event_id}")
+            return 0
+        elif args.command == "retry":
+            service.initialize(start_webhooks=False)
+            service.retry_workflow(args.workflow_id)
+            print(f"Retry requested for: {args.workflow_id}")
+            return 0
+        elif args.command == "pause":
+            service.initialize(start_webhooks=False)
+            service.pause_workflow(args.workflow_id)
+            print(f"Paused: {args.workflow_id}")
+            return 0
+        elif args.command == "resume":
+            service.initialize(start_webhooks=False)
+            service.resume_workflow(args.workflow_id)
+            print(f"Resumed: {args.workflow_id}")
+            return 0
 
-    parser.print_help()
-    return 1
+        parser.print_help()
+        return 1
+    finally:
+        logging_manager.close()
 
 def run_loop(service: OrchestratorService) -> int:
     service.initialize()

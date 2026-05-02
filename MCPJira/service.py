@@ -16,6 +16,7 @@ from main import (
     build_jira_fetcher,
     build_run_manifest,
     configure_logging,
+    detach_file_logging,
     export_confluence_content_with_manifest,
     export_jira_issue,
     finalize_run_manifest,
@@ -70,9 +71,7 @@ class SprinterService:
     def _detach_handler(self, handler: Optional[logging.Handler]) -> None:
         """Remove a previously attached file handler if one exists."""
 
-        if handler is not None:
-            logging.getLogger().removeHandler(handler)
-            handler.close()
+        detach_file_logging(handler)
 
     def _validate_ticket_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Validate that a Jira create-issue payload has the minimum shape.

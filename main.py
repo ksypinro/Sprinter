@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 import yaml
 
 from fetcher import AuthConfig, ConfluenceFetcher, ExporterError, JiraFetcher
+from orchestrator.logging_utils import attach_file_handler, ensure_logging, remove_and_close_handler
 from utils import (
     attachment_filename,
     ensure_dir,
@@ -118,8 +119,7 @@ def configure_logging(level_name: str) -> None:
         level_name: Logging level name such as ``INFO`` or ``DEBUG``.
     """
 
-    level = getattr(logging, level_name.upper(), logging.INFO)
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
+    ensure_logging(level_name, console=True)
 
 
 def attach_file_logging(log_path: str) -> logging.Handler:
@@ -133,10 +133,13 @@ def attach_file_logging(log_path: str) -> logging.Handler:
         it after the run completes.
     """
 
-    handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logging.getLogger().addHandler(handler)
-    return handler
+    return attach_file_handler(log_path)
+
+
+def detach_file_logging(handler: Optional[logging.Handler]) -> None:
+    """Detach and close a file handler returned by ``attach_file_logging``."""
+
+    remove_and_close_handler(handler)
 
 
 def build_run_manifest(ticket_url: str, issue_key: str) -> Dict:
@@ -736,8 +739,7 @@ def main() -> None:
             )
 
             if created_dir != issue_dir:
-                logging.getLogger().removeHandler(file_handler)
-                file_handler.close()
+                detach_file_logging(file_handler)
                 issue_dir = created_dir
                 file_handler = attach_file_logging(os.path.join(issue_dir, "export.log"))
 
@@ -759,9 +761,7 @@ def main() -> None:
             write_manifest(issue_dir, manifest)
         sys.exit(1)
     finally:
-        if file_handler is not None:
-            logging.getLogger().removeHandler(file_handler)
-            file_handler.close()
+        detach_file_logging(file_handler)
 
 
 if __name__ == "__main__":

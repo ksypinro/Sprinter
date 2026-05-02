@@ -221,9 +221,12 @@ Creates a new git branch (`sprinter/<ISSUE_KEY>-<short_id>`), stages all changes
 | `SPRINTER_GITHUB_OWNER` | Repository owner |
 | `SPRINTER_GITHUB_REPO` | Repository name |
 
+For HTTPS remotes, the pusher uses `SPRINTER_GITHUB_TOKEN` via a temporary `GIT_ASKPASS` helper with terminal prompts disabled. Retries after a successful branch push reuse `github_pr/push_state.json` instead of requiring fresh worktree changes.
+
 **Output artifacts**:
 ```text
 exports/SCRUM-123/github_pr/
+  push_state.json
   pr_description.md
   github_pr_result.json
 ```

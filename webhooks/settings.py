@@ -43,6 +43,7 @@ class WebhookSettings:
     jira_path: str = "/webhooks/jira"
     config_path: str = "config.yaml"
     log_level: str = "INFO"
+    log_file: Optional[str] = "exports/.webhooks/webhook-server.log"
     secret_env: str = "SPRINTER_WEBHOOK_SECRET"
     secret: Optional[str] = None
     secret_header: str = "X-Sprinter-Webhook-Secret"
@@ -66,6 +67,7 @@ class WebhookSettings:
         - ``SPRINTER_WEBHOOK_JIRA_PATH``
         - ``SPRINTER_WEBHOOK_CONFIG`` or ``SPRINTER_CONFIG``
         - ``SPRINTER_WEBHOOK_LOG_LEVEL``
+        - ``SPRINTER_WEBHOOK_LOG_FILE``
         - ``SPRINTER_WEBHOOK_SECRET_ENV``
         - ``SPRINTER_WEBHOOK_SECRET`` by default
         - ``SPRINTER_WEBHOOK_SECRET_HEADER``
@@ -138,6 +140,13 @@ class WebhookSettings:
             jira_path=source.get("SPRINTER_WEBHOOK_JIRA_PATH", server_config.get("jira_path", cls.jira_path)).strip(),
             config_path=config_path.strip() if config_path else cls.config_path,
             log_level=source.get("SPRINTER_WEBHOOK_LOG_LEVEL", server_config.get("log_level", cls.log_level)).strip().upper(),
+            log_file=(
+                source.get("SPRINTER_WEBHOOK_LOG_FILE")
+                or server_config.get("log_file")
+                or cls.log_file
+                or ""
+            ).strip()
+            or None,
             secret_env=secret_env,
             secret=secret.strip() if secret else None,
             secret_header=source.get("SPRINTER_WEBHOOK_SECRET_HEADER", auth_config.get("secret_header", cls.secret_header)).strip(),

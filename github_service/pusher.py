@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -31,34 +32,45 @@ class GitPusherService:
         commit_log_path = repo_path(self.repo_root, payload["commit_log_path"])
         commit_log = read_text_required(commit_log_path, "commit log")
 
-        if not self.git.has_changes():
-            raise ValueError("No git changes found to commit.")
-
-        branch = self._branch_name(workflow_id, command_id)
-        if branch == self.settings.base_branch:
-            raise ValueError("Refusing to create a pull request from the base branch.")
-
-        changed_files = self.git.changed_files()
-        self.git.create_branch(branch)
-        self.git.add_all()
-        self.git.commit(self._commit_subject(workflow_id), commit_log)
-        self.git.push(self.settings.remote, branch)
-        commit_sha = self.git.head_sha()
-
         output_dir = issue_dir / "github_pr"
         description_path = output_dir / "pr_description.md"
         result_path = output_dir / "github_pr_result.json"
+        push_state_path = output_dir / "push_state.json"
+
+        if self.git.has_changes():
+            branch = self._branch_name(workflow_id, command_id)
+            if branch == self.settings.base_branch:
+                raise ValueError("Refusing to create a pull request from the base branch.")
+
+            changed_files = self.git.changed_files()
+            self.git.create_branch(branch)
+            self.git.add_all()
+            self.git.commit(self._commit_subject(workflow_id), commit_log)
+            self.git.push(self.settings.remote, branch, token=self.settings.token)
+            commit_sha = self.git.head_sha()
+            write_json(push_state_path, self._push_state(workflow_id, branch, commit_sha, changed_files))
+        else:
+            push_state, needs_push = self._load_or_recreate_push_state(workflow_id, payload, push_state_path)
+            branch = push_state["branch"]
+            changed_files = list(push_state.get("changed_files") or [])
+            commit_sha = push_state["commit_sha"]
+            if needs_push:
+                self.git.push(self.settings.remote, branch, token=self.settings.token)
+                write_json(push_state_path, push_state)
+
         description = self._pr_body(workflow_id, commit_log, changed_files)
         description_path.parent.mkdir(parents=True, exist_ok=True)
         description_path.write_text(description, encoding="utf-8")
 
-        pr = self.client.create_pull_request(
-            title=self._commit_subject(workflow_id),
-            head=branch,
-            base=self.settings.base_branch,
-            body=description,
-            draft=self.settings.draft_pr,
-        )
+        pr = self.client.find_open_pull_request(branch, self.settings.base_branch)
+        if not pr:
+            pr = self.client.create_pull_request(
+                title=self._commit_subject(workflow_id),
+                head=branch,
+                base=self.settings.base_branch,
+                body=description,
+                draft=self.settings.draft_pr,
+            )
 
         result = {
             "status": "success",
@@ -74,6 +86,7 @@ class GitPusherService:
             "issue_dir": str(issue_dir),
             "commit_log_path": str(commit_log_path),
             "description_path": str(description_path),
+            "push_state_path": str(push_state_path),
             "result_path": str(result_path),
             "created_at": utc_now_iso(),
         }
@@ -83,6 +96,52 @@ class GitPusherService:
     def _branch_name(self, workflow_id: str, command_id: str) -> str:
         safe_workflow = workflow_id.replace("/", "-").replace(" ", "-")
         return f"{self.settings.branch_prefix}{safe_workflow}-{command_id[:8]}"
+
+    def _load_or_recreate_push_state(
+        self,
+        workflow_id: str,
+        payload: dict[str, Any],
+        push_state_path: Path,
+    ) -> tuple[dict[str, Any], bool]:
+        push_state = self._read_push_state(push_state_path)
+        if push_state:
+            return push_state, False
+
+        branch = self.git.current_branch()
+        if branch == self.settings.base_branch or not branch.startswith(self._workflow_branch_prefix(workflow_id)):
+            raise ValueError("No git changes found to commit and no pushed branch state is available.")
+
+        commit_sha = self.git.head_sha()
+        changed_files = list(payload.get("changed_files") or [])
+        push_state = self._push_state(workflow_id, branch, commit_sha, changed_files)
+        return push_state, True
+
+    def _read_push_state(self, push_state_path: Path) -> Optional[dict[str, Any]]:
+        if not push_state_path.exists():
+            return None
+        try:
+            data = json.loads(push_state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Push state is invalid JSON: {push_state_path}") from exc
+        required = {"branch", "commit_sha", "changed_files"}
+        if not required.issubset(data):
+            raise ValueError(f"Push state is missing required fields: {push_state_path}")
+        return data
+
+    def _push_state(self, workflow_id: str, branch: str, commit_sha: str, changed_files: list[str]) -> dict[str, Any]:
+        return {
+            "workflow_id": workflow_id,
+            "branch": branch,
+            "base_branch": self.settings.base_branch,
+            "remote": self.settings.remote,
+            "commit_sha": commit_sha,
+            "changed_files": changed_files,
+            "pushed_at": utc_now_iso(),
+        }
+
+    def _workflow_branch_prefix(self, workflow_id: str) -> str:
+        safe_workflow = workflow_id.replace("/", "-").replace(" ", "-")
+        return f"{self.settings.branch_prefix}{safe_workflow}-"
 
     @staticmethod
     def _commit_subject(workflow_id: str) -> str:

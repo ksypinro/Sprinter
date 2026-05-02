@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 
+from orchestrator.logging_utils import setup_logging
 from webhooks.app import create_webhook_application, create_webhook_server
 from webhooks.settings import WebhookSettings, WebhookSettingsError
 
@@ -21,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--webhook-config", help="Webhook settings file. Defaults to webhooks/config.yaml.")
     parser.add_argument("--store-path", help="Filesystem store path. Defaults to <storage.export_path>/.webhooks.")
     parser.add_argument("--log-level", help=f"Python logging level. Defaults to {WebhookSettings.log_level}.")
+    parser.add_argument("--log-file", help=f"Text log file path. Defaults to {WebhookSettings.log_file}.")
     parser.add_argument("--no-worker", action="store_true", help="Receive and queue webhooks without processing jobs.")
     return parser.parse_args()
 
@@ -43,6 +45,8 @@ def settings_from_args(args: argparse.Namespace) -> WebhookSettings:
         env["SPRINTER_WEBHOOK_STORE_PATH"] = args.store_path
     if args.log_level:
         env["SPRINTER_WEBHOOK_LOG_LEVEL"] = args.log_level
+    if args.log_file:
+        env["SPRINTER_WEBHOOK_LOG_FILE"] = args.log_file
     if args.no_worker:
         env["SPRINTER_WEBHOOK_WORKER_ENABLED"] = "false"
     return WebhookSettings.from_env(env)
@@ -56,22 +60,26 @@ def main() -> None:
     except WebhookSettingsError as exc:
         raise SystemExit(f"Webhook settings error: {exc}") from exc
 
-    logging.basicConfig(level=getattr(logging, settings.log_level), format="%(asctime)s %(levelname)s %(message)s")
-    application = create_webhook_application(settings=settings)
-    server = create_webhook_server(application)
-
-    if application.worker:
-        application.worker.start()
-
-    logging.info("Sprinter webhook server listening on http://%s:%s%s", settings.host, settings.port, settings.jira_path)
+    logging_manager = setup_logging(settings.log_level, settings.log_file, console=True)
+    application = None
+    server = None
     try:
+        application = create_webhook_application(settings=settings)
+        server = create_webhook_server(application)
+
+        if application.worker:
+            application.worker.start()
+
+        logging.info("Sprinter webhook server listening on http://%s:%s%s", settings.host, settings.port, settings.jira_path)
         server.serve_forever()
     except KeyboardInterrupt:
         logging.info("Stopping Sprinter webhook server.")
     finally:
-        if application.worker:
+        if application and application.worker:
             application.worker.stop()
-        server.server_close()
+        if server:
+            server.server_close()
+        logging_manager.close()
 
 
 if __name__ == "__main__":

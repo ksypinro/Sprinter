@@ -55,6 +55,8 @@ server:
   host: "127.0.0.1"
   port: 8090
   jira_path: "/webhooks/jira"
+  log_level: "INFO"
+  log_file: "exports/.webhooks/webhook-server.log"
 
 auth:
   secret: ""                            # Use env var instead
@@ -97,6 +99,7 @@ jira_webhook:
 | `SPRINTER_WEBHOOK_HOST` | Override server host |
 | `SPRINTER_WEBHOOK_PORT` | Override server port |
 | `SPRINTER_WEBHOOK_CONFIG` | Path to Sprinter `config.yaml` |
+| `SPRINTER_WEBHOOK_LOG_FILE` | Text log file for the standalone Jira webhook server |
 | `SPRINTER_WEBHOOK_USE_ORCHESTRATOR` | Set to `true` to forward events to the orchestrator |
 | `NGROK_AUTHTOKEN` | ngrok authentication token |
 
@@ -105,6 +108,8 @@ jira_webhook:
 ```bash
 .venv/bin/python -m webhooks.server
 ```
+
+The standalone server writes process logs to `exports/.webhooks/webhook-server.log` by default. Override it with `--log-file` or `SPRINTER_WEBHOOK_LOG_FILE`.
 
 ### Setup with ngrok
 
@@ -182,6 +187,8 @@ github_webhook:
 ```bash
 .venv/bin/python -m github_webhooks.server --host 127.0.0.1 --port 8091 --path /webhooks/github
 ```
+
+The standalone GitHub server writes process logs to `exports/.github_webhooks/webhook-server.log` by default. Override it with `--log-file`.
 
 ### Setup with ngrok
 

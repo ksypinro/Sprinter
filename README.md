@@ -200,6 +200,7 @@ pip install -r requirements.txt
 | `SPRINTER_GITHUB_BASE_BRANCH` | No | Base branch for PRs (default: `main`) |
 | `SPRINTER_GITHUB_BRANCH_PREFIX` | No | Branch prefix for PRs (default: `sprinter/`) |
 | `SPRINTER_GITHUB_DRAFT_PR` | No | Create PRs as draft (default: `true`) |
+| `SPRINTER_GITHUB_REQUEST_TIMEOUT_SECONDS` | No | GitHub REST API request timeout (default: `20`) |
 
 ### Configuration Files
 
@@ -212,6 +213,10 @@ pip install -r requirements.txt
 | `github_webhooks/ngrok_config.yaml` | GitHub ngrok setup script settings |
 | `codex_analysis/config.yaml` | Codex analyzer settings |
 | `codex_implementer/config.yaml` | Codex implementer settings |
+
+### Logging
+
+Sprinter uses a shared stdlib logging manager. The orchestrator writes process logs to `exports/.orchestrator/logs/orchestrator.log` by default, standalone Jira webhooks write to `exports/.webhooks/webhook-server.log`, and standalone GitHub webhooks write to `exports/.github_webhooks/webhook-server.log`. Per-run Jira export logs remain under each issue directory as `export.log`.
 
 ### Safety Flags
 
@@ -430,6 +435,7 @@ curl http://127.0.0.1:8091/ready
 .venv/bin/python -m unittest tests.test_orchestrator_implementation -v
 .venv/bin/python -m unittest tests.test_orchestrator_github -v
 .venv/bin/python -m unittest tests.test_orchestrator_webhook_servers -v
+.venv/bin/python -m unittest tests.test_logging_utils tests.test_orchestrator_logging -v
 ```
 
 ## Architecture Documentation
