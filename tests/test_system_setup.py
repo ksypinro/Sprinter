@@ -68,6 +68,25 @@ class SystemSetupWebhookConfigTestCase(unittest.TestCase):
             self.assertEqual(servers["github"]["port"], 19091)
             self.assertEqual(servers["github"]["path"], "/custom/github")
 
+    def test_start_stack_args_are_parsed(self):
+        args = systemSetup.parse_args(["--start-stack", "--router-port", "18888"])
+
+        self.assertTrue(args.start_stack)
+        self.assertEqual(args.router_port, 18888)
+
+    def test_build_router_script_includes_configured_webhook_routes(self):
+        endpoints = {
+            "jira": {"host": "127.0.0.1", "port": 19090, "path": "/custom/jira"},
+            "github": {"host": "127.0.0.1", "port": 19091, "path": "/custom/github"},
+        }
+
+        script = systemSetup.build_router_script("127.0.0.1", 18888, endpoints)
+
+        self.assertIn("/custom/jira", script)
+        self.assertIn("/custom/github", script)
+        self.assertIn("19090", script)
+        self.assertIn("19091", script)
+
     def _run_with_config(self, config_path: Path) -> bool:
         old_path = systemSetup.ORCHESTRATOR_CONFIG_FILE
         systemSetup.ORCHESTRATOR_CONFIG_FILE = config_path

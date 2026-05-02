@@ -17,11 +17,16 @@ Usage:
     python3 systemSetup.py
 """
 
+import argparse
+import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Iterable, Optional
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -34,6 +39,11 @@ ENV_FILE = REPO_ROOT / ".env"
 CONFIG_FILE = REPO_ROOT / "config.yaml"
 ORCHESTRATOR_CONFIG_FILE = REPO_ROOT / "orchestrator" / "config.yaml"
 ORCHESTRATOR_STORAGE = REPO_ROOT / "exports" / ".orchestrator"
+ROUTER_HOST = "127.0.0.1"
+ROUTER_PORT = 8088
+NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
+SETUP_CHECK_TIMEOUT_SECONDS = 45
+SETUP_CHECK_POLL_SECONDS = 1.0
 
 MIN_PYTHON = (3, 10)
 
@@ -197,6 +207,23 @@ def run_command(args: list[str], cwd: Path = REPO_ROOT, check: bool = True) -> s
 def which(command: str) -> bool:
     """Check if a command is available on PATH."""
     return shutil.which(command) is not None
+
+
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """Parse system setup CLI arguments."""
+
+    parser = argparse.ArgumentParser(description="Prepare and optionally run the Sprinter local automation stack.")
+    parser.add_argument(
+        "--start-stack",
+        action="store_true",
+        help=(
+            "After setup validation, start the orchestrator, a combined local webhook router, ngrok, "
+            "and register Jira/GitHub webhooks. This command keeps running until Ctrl+C."
+        ),
+    )
+    parser.add_argument("--router-host", default=ROUTER_HOST, help=f"Combined webhook router host. Defaults to {ROUTER_HOST}.")
+    parser.add_argument("--router-port", type=int, default=ROUTER_PORT, help=f"Combined webhook router port. Defaults to {ROUTER_PORT}.")
+    return parser.parse_args(argv)
 
 
 # ---------------------------------------------------------------------------
@@ -519,16 +546,11 @@ def print_summary(
     if all_ok and env_missing == 0:
         print(f"{Colors.BOLD}{Colors.GREEN}  🚀 Sprinter is ready!{Colors.RESET}")
         print()
-        info("Start the orchestrator:")
+        info("Start the full local stack and register both webhooks:")
         print(f"    source .env")
-        print(f"    .venv/bin/python -m orchestrator start")
+        print(f"    .venv/bin/python systemSetup.py --start-stack")
         print()
-        info("The orchestrator auto-starts local Jira and GitHub webhook servers when it starts.")
-        print()
-        info("Register webhooks (in a separate terminal):")
-        print(f"    source .env")
-        print(f"    .venv/bin/python -m webhooks.setup")
-        print(f"    .venv/bin/python -m github_webhooks.setup")
+        info("This starts the orchestrator, exposes Jira/GitHub webhooks through ngrok, and registers both remote hooks.")
     else:
         print(f"{Colors.BOLD}{Colors.YELLOW}  ⚠ Setup is incomplete.{Colors.RESET}")
         print()
@@ -542,10 +564,279 @@ def print_summary(
 
 
 # ---------------------------------------------------------------------------
+# Full Stack Runtime
+# ---------------------------------------------------------------------------
+
+def start_full_stack(router_host: str = ROUTER_HOST, router_port: int = ROUTER_PORT) -> int:
+    """Start orchestrator-owned webhooks, ngrok, and public webhook registrations."""
+
+    banner("Starting Sprinter Full Stack")
+
+    endpoints = load_orchestrator_webhook_endpoints()
+    processes: list[subprocess.Popen] = []
+
+    try:
+        orchestrator_process = start_process(
+            [str(VENV_DIR / "bin" / "python"), "-m", "orchestrator", "start"],
+            label="orchestrator",
+        )
+        processes.append(orchestrator_process)
+
+        wait_for_json_status(_local_ready_url(endpoints["jira"]), "ready", process=orchestrator_process)
+        wait_for_json_status(_local_ready_url(endpoints["github"]), "ready", process=orchestrator_process)
+        success("Orchestrator started Jira and GitHub webhook servers")
+
+        router_process = start_process(
+            [str(VENV_DIR / "bin" / "python"), "-c", build_router_script(router_host, router_port, endpoints)],
+            label="webhook-router",
+        )
+        processes.append(router_process)
+        router_ready_url = f"http://{router_host}:{router_port}/ready"
+        wait_for_json_status(router_ready_url, "ready", process=router_process)
+        success(f"Combined webhook router ready at {router_ready_url}")
+
+        ngrok_process = start_process(
+            ["ngrok", "http", f"http://{router_host}:{router_port}", "--log", "stdout", "--log-format", "json"],
+            label="ngrok",
+        )
+        processes.append(ngrok_process)
+        public_base_url = wait_for_ngrok_public_url(process=ngrok_process)
+        wait_for_json_status(public_base_url.rstrip("/") + "/ready", "ready", process=ngrok_process)
+        success(f"ngrok public URL ready: {public_base_url}")
+
+        jira_url = public_base_url.rstrip("/") + endpoints["jira"]["path"]
+        github_url = public_base_url.rstrip("/") + endpoints["github"]["path"]
+        jira_webhook_id = register_jira_from_environment(jira_url)
+        github_webhook_id = register_github_from_environment(github_url)
+
+        success(f"Jira webhook registered: {jira_webhook_id}")
+        success(f"GitHub webhook registered: {github_webhook_id}")
+
+        print()
+        print(f"{Colors.BOLD}{Colors.GREEN}  Sprinter stack is running.{Colors.RESET}")
+        info(f"Jira webhook URL: {jira_url}")
+        info(f"GitHub webhook URL: {github_url}")
+        info("Press Ctrl+C to stop local orchestrator/router/ngrok processes.")
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        print("\nStopping Sprinter full stack.")
+        return 0
+    except Exception as exc:
+        error(f"Full stack startup failed: {exc}")
+        return 1
+    finally:
+        stop_processes(processes)
+
+
+def start_process(command: list[str], label: str) -> subprocess.Popen:
+    """Start a long-running process for the full stack."""
+
+    info(f"Starting {label}: {' '.join(command)}")
+    return subprocess.Popen(command, cwd=REPO_ROOT, env=os.environ.copy())
+
+
+def load_orchestrator_webhook_endpoints() -> dict[str, dict[str, object]]:
+    """Read orchestrator webhook endpoint host, port, and path settings."""
+
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError("PyYAML is required to load orchestrator webhook endpoints.") from exc
+
+    data = {}
+    if ORCHESTRATOR_CONFIG_FILE.exists():
+        data = yaml.safe_load(ORCHESTRATOR_CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    servers = data.get("webhook_servers") if isinstance(data, dict) else {}
+    if not isinstance(servers, dict):
+        servers = {}
+
+    return {
+        "jira": _webhook_endpoint_from_config(servers, "jira", DEFAULT_WEBHOOK_SERVER_CONFIG["jira"]),
+        "github": _webhook_endpoint_from_config(servers, "github", DEFAULT_WEBHOOK_SERVER_CONFIG["github"]),
+    }
+
+
+def _webhook_endpoint_from_config(servers: dict, name: str, defaults: dict) -> dict[str, object]:
+    section = servers.get(name)
+    if not isinstance(section, dict):
+        section = {}
+    return {
+        "host": str(section.get("host", defaults["host"])),
+        "port": int(section.get("port", defaults["port"])),
+        "path": str(section.get("path", defaults["path"])),
+    }
+
+
+def build_router_script(router_host: str, router_port: int, endpoints: dict[str, dict[str, object]]) -> str:
+    """Build a small Python HTTP router for Jira and GitHub webhook paths."""
+
+    routes = {
+        str(endpoints["jira"]["path"]): [str(endpoints["jira"]["host"]), int(endpoints["jira"]["port"])],
+        str(endpoints["github"]["path"]): [str(endpoints["github"]["host"]), int(endpoints["github"]["port"])],
+    }
+    return f"""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.client import HTTPConnection
+from urllib.parse import urlsplit
+import json
+
+ROUTES = {json.dumps(routes, sort_keys=True)}
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = urlsplit(self.path).path
+        if path == "/ready":
+            body = json.dumps({{"status": "ready", "routes": sorted(ROUTES)}}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_error(404)
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+        target = ROUTES.get(path)
+        if not target:
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(length)
+        headers = {{
+            key: value
+            for key, value in self.headers.items()
+            if key.lower() not in {{"host", "connection", "accept-encoding"}}
+        }}
+        conn = HTTPConnection(target[0], target[1], timeout=30)
+        try:
+            conn.request(self.command, path, body=body, headers=headers)
+            response = conn.getresponse()
+            data = response.read()
+            self.send_response(response.status)
+            for key, value in response.getheaders():
+                if key.lower() not in {{"transfer-encoding", "connection", "server", "date"}}:
+                    self.send_header(key, value)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        finally:
+            conn.close()
+
+    def log_message(self, _fmt, *_args):
+        return
+
+print("router listening on http://{router_host}:{router_port}", flush=True)
+ThreadingHTTPServer(("{router_host}", {router_port}), Handler).serve_forever()
+"""
+
+
+def register_jira_from_environment(public_webhook_url: str) -> str:
+    """Register the Jira webhook using the environment secret."""
+
+    from webhooks.setup import load_setup_config, register_jira_webhook
+
+    secret = os.environ.get("SPRINTER_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        raise RuntimeError("SPRINTER_WEBHOOK_SECRET is required to register the Jira webhook.")
+    return register_jira_webhook(public_webhook_url, secret, load_setup_config())
+
+
+def register_github_from_environment(public_webhook_url: str) -> str:
+    """Register the GitHub webhook using the environment secret and token."""
+
+    from github_service.settings import GitHubSettings
+    from github_webhooks.setup import GitHubHookClient, load_setup_config, register_github_webhook
+
+    settings = GitHubSettings.from_env()
+    settings.require_webhook()
+    secret = settings.webhook_secret or ""
+    return register_github_webhook(public_webhook_url, secret, load_setup_config(), GitHubHookClient(settings))
+
+
+def wait_for_json_status(
+    url: str,
+    expected_status: str,
+    *,
+    process: Optional[subprocess.Popen] = None,
+    timeout_seconds: int = SETUP_CHECK_TIMEOUT_SECONDS,
+    poll_seconds: float = SETUP_CHECK_POLL_SECONDS,
+) -> None:
+    """Wait until a JSON endpoint reports the expected status."""
+
+    import requests
+
+    deadline = time.time() + timeout_seconds
+    last_error = ""
+    while time.time() < deadline:
+        if process and process.poll() is not None:
+            raise RuntimeError(f"Process exited while waiting for {url}: {process.returncode}")
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("status") == expected_status:
+                return
+            last_error = f"unexpected payload: {payload}"
+        except (requests.RequestException, ValueError) as exc:
+            last_error = str(exc)
+        time.sleep(poll_seconds)
+    raise RuntimeError(f"Timed out waiting for {url}. Last error: {last_error}")
+
+
+def wait_for_ngrok_public_url(
+    *,
+    process: Optional[subprocess.Popen] = None,
+    timeout_seconds: int = SETUP_CHECK_TIMEOUT_SECONDS,
+    poll_seconds: float = SETUP_CHECK_POLL_SECONDS,
+) -> str:
+    """Wait for ngrok's local API to expose an HTTPS public URL."""
+
+    import requests
+
+    deadline = time.time() + timeout_seconds
+    last_error = ""
+    while time.time() < deadline:
+        if process and process.poll() is not None:
+            raise RuntimeError(f"ngrok exited before exposing a public URL: {process.returncode}")
+        try:
+            response = requests.get(NGROK_API_URL, timeout=5)
+            response.raise_for_status()
+            for tunnel in response.json().get("tunnels", []):
+                public_url = tunnel.get("public_url")
+                if isinstance(public_url, str) and public_url.startswith("https://"):
+                    return public_url
+        except (requests.RequestException, ValueError) as exc:
+            last_error = str(exc)
+        time.sleep(poll_seconds)
+    raise RuntimeError(f"ngrok did not expose a public HTTPS URL. Last error: {last_error}")
+
+
+def _local_ready_url(endpoint: dict[str, object]) -> str:
+    return f"http://{endpoint['host']}:{endpoint['port']}/ready"
+
+
+def stop_processes(processes: Iterable[subprocess.Popen]) -> None:
+    """Stop long-running setup processes in reverse startup order."""
+
+    for process in reversed(list(processes)):
+        if process.poll() is not None:
+            continue
+        process.send_signal(signal.SIGTERM)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    args = parse_args(argv)
     banner("Sprinter System Setup")
 
     python_ok = check_python_version()
@@ -567,6 +858,12 @@ def main() -> int:
         python_ok, venv_ok, deps_ok, env_ok, config_ok,
         env_set, env_missing, tools_found, tools_missing, storage_ok, webhook_autostart_ok,
     )
+
+    if args.start_stack:
+        if not all([python_ok, venv_ok, deps_ok, env_ok, config_ok, storage_ok, webhook_autostart_ok]) or env_missing > 0:
+            error("Cannot start full stack until setup checks pass and all required environment variables are set.")
+            return 1
+        return start_full_stack(args.router_host, args.router_port)
 
     return 0
 
