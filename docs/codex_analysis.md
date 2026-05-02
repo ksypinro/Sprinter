@@ -4,6 +4,8 @@ The Codex Analyzer is the read-only planning stage that runs after a Jira issue 
 
 It reads the exported Jira, attachment, and Confluence artifacts, asks Codex CLI to analyze the work, and writes `analysis_and_plan.md` back into the issue export directory. The analyzer does not edit source files, create branches, make commits, or open pull requests.
 
+`workers.planner_worker` depends on the `Analyzer` protocol from `workers.protocols`. `CodexAnalysisService` is the default implementation, but another analyzer can be injected into the worker through an alternate factory if it implements `analyze_export(event, export_result)` and returns the same artifact keys.
+
 ## Pipeline
 
 The orchestrated flow is:

@@ -1,14 +1,20 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
+
 from codex_analysis.service import create_codex_analysis_service
 from orchestrator.models import WorkerResult, utc_now_iso
 from webhooks.models import WebhookEvent
 from workers.base import WorkerRuntime, main_worker
+from workers.protocols import AnalyzerFactory
 
-def run(runtime: WorkerRuntime) -> WorkerResult:
+
+def run(
+    runtime: WorkerRuntime,
+    analyzer_factory: AnalyzerFactory = create_codex_analysis_service,
+) -> WorkerResult:
     started_at = utc_now_iso()
-    analysis_service = create_codex_analysis_service(repo_root=runtime.repo_root)
+    analysis_service = analyzer_factory(runtime.repo_root)
     
     issue_key = runtime.command.workflow_id
     issue_dir = runtime.command.payload.get("issue_dir") or str(runtime.repo_root / "exports" / issue_key)
