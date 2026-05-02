@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 import signal
@@ -47,6 +48,19 @@ SETUP_CHECK_TIMEOUT_SECONDS = 45
 SETUP_CHECK_POLL_SECONDS = 1.0
 
 MIN_PYTHON = (3, 10)
+
+@dataclass(frozen=True)
+class JiraWebhookRegistration:
+    webhook_id: str
+    delete_on_exit: bool
+    config_path: str
+
+
+@dataclass(frozen=True)
+class GitHubWebhookRegistration:
+    webhook_id: str
+    delete_on_exit: bool
+
 
 REQUIRED_ENV_VARS = [
     ("ATLASSIAN_EMAIL", "Jira/Confluence login email"),
@@ -575,6 +589,8 @@ def start_full_stack(router_host: str = ROUTER_HOST, router_port: int = ROUTER_P
 
     endpoints = load_orchestrator_webhook_endpoints()
     processes: list[subprocess.Popen] = []
+    jira_registration: Optional[JiraWebhookRegistration] = None
+    github_registration: Optional[GitHubWebhookRegistration] = None
 
     try:
         orchestrator_process = start_process(
@@ -607,11 +623,11 @@ def start_full_stack(router_host: str = ROUTER_HOST, router_port: int = ROUTER_P
 
         jira_url = public_base_url.rstrip("/") + endpoints["jira"]["path"]
         github_url = public_base_url.rstrip("/") + endpoints["github"]["path"]
-        jira_webhook_id = register_jira_from_environment(jira_url)
-        github_webhook_id = register_github_from_environment(github_url)
+        jira_registration = register_jira_from_environment(jira_url)
+        github_registration = register_github_from_environment(github_url)
 
-        success(f"Jira webhook registered: {jira_webhook_id}")
-        success(f"GitHub webhook registered: {github_webhook_id}")
+        success(f"Jira webhook registered: {jira_registration.webhook_id}")
+        success(f"GitHub webhook registered: {github_registration.webhook_id}")
 
         print()
         print(f"{Colors.BOLD}{Colors.GREEN}  Sprinter stack is running.{Colors.RESET}")
@@ -627,6 +643,7 @@ def start_full_stack(router_host: str = ROUTER_HOST, router_port: int = ROUTER_P
         error(f"Full stack startup failed: {exc}")
         return 1
     finally:
+        cleanup_full_stack_webhook_registrations(jira_registration, github_registration)
         stop_processes(processes)
 
 
@@ -733,7 +750,7 @@ ThreadingHTTPServer(("{router_host}", {router_port}), Handler).serve_forever()
 """
 
 
-def register_jira_from_environment(public_webhook_url: str) -> str:
+def register_jira_from_environment(public_webhook_url: str) -> JiraWebhookRegistration:
     """Register the Jira webhook using the environment secret."""
 
     from webhooks.setup import load_setup_config, register_jira_webhook
@@ -741,10 +758,16 @@ def register_jira_from_environment(public_webhook_url: str) -> str:
     secret = os.environ.get("SPRINTER_WEBHOOK_SECRET", "").strip()
     if not secret:
         raise RuntimeError("SPRINTER_WEBHOOK_SECRET is required to register the Jira webhook.")
-    return register_jira_webhook(public_webhook_url, secret, load_setup_config())
+    setup_config = load_setup_config()
+    webhook_id = register_jira_webhook(public_webhook_url, secret, setup_config)
+    return JiraWebhookRegistration(
+        webhook_id=webhook_id,
+        delete_on_exit=setup_config.jira_webhook.delete_on_exit,
+        config_path=setup_config.webhook_server.config_path,
+    )
 
 
-def register_github_from_environment(public_webhook_url: str) -> str:
+def register_github_from_environment(public_webhook_url: str) -> GitHubWebhookRegistration:
     """Register the GitHub webhook using the environment secret and token."""
 
     from github_service.settings import GitHubSettings
@@ -754,8 +777,14 @@ def register_github_from_environment(public_webhook_url: str) -> str:
     settings.require_webhook()
     secret = settings.webhook_secret or ""
     client = GitHubHookClient(settings)
-    delete_stale_ngrok_github_hooks(client, public_webhook_url)
-    return register_github_webhook(public_webhook_url, secret, load_setup_config(), client)
+    setup_config = load_setup_config()
+    if setup_config.github_webhook.replace_existing:
+        delete_stale_ngrok_github_hooks(client, public_webhook_url)
+    hook_id = register_github_webhook(public_webhook_url, secret, setup_config, client)
+    return GitHubWebhookRegistration(
+        webhook_id=hook_id,
+        delete_on_exit=setup_config.github_webhook.delete_on_exit,
+    )
 
 
 def delete_stale_ngrok_github_hooks(client: object, public_webhook_url: str) -> list[str]:
@@ -780,6 +809,34 @@ def delete_stale_ngrok_github_hooks(client: object, public_webhook_url: str) -> 
     if deleted:
         info(f"Deleted stale GitHub ngrok hooks for {target_path}: {', '.join(deleted)}")
     return deleted
+
+
+def cleanup_full_stack_webhook_registrations(
+    jira_registration: Optional[JiraWebhookRegistration],
+    github_registration: Optional[GitHubWebhookRegistration],
+) -> None:
+    """Delete remote webhooks created by --start-stack when configured to do so."""
+
+    if github_registration and github_registration.delete_on_exit:
+        try:
+            from github_service.settings import GitHubSettings
+            from github_webhooks.setup import GitHubHookClient
+
+            settings = GitHubSettings.from_env()
+            settings.require_webhook()
+            GitHubHookClient(settings).delete_hook(github_registration.webhook_id)
+            info(f"Deleted GitHub repository webhook on exit: {github_registration.webhook_id}")
+        except Exception as exc:
+            warning(f"Could not delete GitHub repository webhook on exit: {exc}")
+
+    if jira_registration and jira_registration.delete_on_exit:
+        try:
+            from webhooks.setup import build_webhook_api_client
+
+            build_webhook_api_client(jira_registration.config_path).delete_admin_webhook(jira_registration.webhook_id)
+            info(f"Deleted Jira webhook on exit: {jira_registration.webhook_id}")
+        except Exception as exc:
+            warning(f"Could not delete Jira webhook on exit: {exc}")
 
 
 def wait_for_json_status(

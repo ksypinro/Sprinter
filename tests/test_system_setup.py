@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import yaml
 
@@ -108,6 +110,56 @@ class SystemSetupWebhookConfigTestCase(unittest.TestCase):
 
         self.assertEqual(deleted, ["1"])
         self.assertEqual(client.deleted, [1])
+
+    def test_register_github_respects_replace_existing_when_cleaning_stale_hooks(self):
+        setup_config = SimpleNamespace(
+            github_webhook=SimpleNamespace(replace_existing=False, delete_on_exit=False),
+        )
+        env = {
+            "SPRINTER_GITHUB_TOKEN": "token",
+            "SPRINTER_GITHUB_OWNER": "owner",
+            "SPRINTER_GITHUB_REPO": "repo",
+            "SPRINTER_GITHUB_WEBHOOK_SECRET": "secret",
+        }
+
+        with mock.patch.dict("os.environ", env, clear=True):
+            with mock.patch("github_webhooks.setup.load_setup_config", return_value=setup_config):
+                with mock.patch("github_webhooks.setup.GitHubHookClient"):
+                    with mock.patch("github_webhooks.setup.register_github_webhook", return_value="42"):
+                        with mock.patch("systemSetup.delete_stale_ngrok_github_hooks") as cleanup:
+                            registration = systemSetup.register_github_from_environment(
+                                "https://new.ngrok-free.dev/webhooks/github"
+                            )
+
+        cleanup.assert_not_called()
+        self.assertEqual(registration.webhook_id, "42")
+        self.assertFalse(registration.delete_on_exit)
+
+    def test_cleanup_full_stack_webhook_registrations_honors_delete_on_exit(self):
+        jira_client = mock.Mock()
+        github_client = mock.Mock()
+
+        with mock.patch("webhooks.setup.build_webhook_api_client", return_value=jira_client):
+            with mock.patch("github_service.settings.GitHubSettings.from_env", return_value=mock.Mock()):
+                with mock.patch("github_webhooks.setup.GitHubHookClient", return_value=github_client):
+                    systemSetup.cleanup_full_stack_webhook_registrations(
+                        systemSetup.JiraWebhookRegistration("jira-1", True, "config.yaml"),
+                        systemSetup.GitHubWebhookRegistration("github-1", True),
+                    )
+
+        jira_client.delete_admin_webhook.assert_called_once_with("jira-1")
+        github_client.delete_hook.assert_called_once_with("github-1")
+
+    def test_cleanup_full_stack_webhook_registrations_skips_when_disabled(self):
+        with mock.patch("webhooks.setup.build_webhook_api_client") as jira_client_builder:
+            with mock.patch("github_webhooks.setup.GitHubHookClient") as github_client:
+                systemSetup.cleanup_full_stack_webhook_registrations(
+                    systemSetup.JiraWebhookRegistration("jira-1", False, "config.yaml"),
+                    systemSetup.GitHubWebhookRegistration("github-1", False),
+                )
+
+        jira_client_builder.assert_not_called()
+        github_client.assert_not_called()
 
     def _run_with_config(self, config_path: Path) -> bool:
         old_path = systemSetup.ORCHESTRATOR_CONFIG_FILE
