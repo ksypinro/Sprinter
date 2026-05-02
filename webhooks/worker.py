@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Protocol
 from JiraStreamableMCP.service import JiraStreamableService
 from webhooks.models import WebhookEvent, WebhookJob, utc_now_iso
 from webhooks.store import FilesystemWebhookStore
+from workers.protocols import Analyzer
 
 
 class WorkerError(RuntimeError):
@@ -34,7 +35,7 @@ class WebhookExportService:
         self,
         config_path: str = "config.yaml",
         service: Optional[ExportService] = None,
-        analysis_service: Optional[object] = None,
+        analysis_service: Optional[Analyzer] = None,
     ):
         """Initialize the export adapter."""
 

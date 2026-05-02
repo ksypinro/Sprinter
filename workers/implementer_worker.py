@@ -5,11 +5,15 @@ from typing import Optional
 from codex_implementer.service import create_codex_implementer_service
 from orchestrator.models import WorkerResult, utc_now_iso
 from workers.base import WorkerRuntime, main_worker
+from workers.protocols import ImplementerFactory
 
 
-def run(runtime: WorkerRuntime) -> WorkerResult:
+def run(
+    runtime: WorkerRuntime,
+    implementer_factory: ImplementerFactory = create_codex_implementer_service,
+) -> WorkerResult:
     started_at = utc_now_iso()
-    implementer_service = create_codex_implementer_service(repo_root=runtime.repo_root)
+    implementer_service = implementer_factory(runtime.repo_root)
 
     if implementer_service:
         result = implementer_service.implement_plan(runtime.command.payload)

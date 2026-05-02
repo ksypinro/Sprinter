@@ -58,6 +58,15 @@ Every worker must write a `WorkerResult` JSON file to `SPRINTER_WORKER_RESULT_PA
 
 The `artifacts` dict is worker-specific and carries paths and metadata needed by the next pipeline stage.
 
+### Analyzer and Implementer Protocols
+
+The `analyze_issue` and `execute_plan` workers depend on service-level protocols from `workers.protocols`:
+
+- `Analyzer.analyze_export(event, export_result) -> dict`
+- `Implementer.implement_plan(payload) -> dict`
+
+Codex remains the default implementation through `create_codex_analysis_service` and `create_codex_implementer_service`. Tests or future providers can inject alternate factories into the worker `run` functions as long as they preserve the same artifact keys expected by the orchestrator.
+
 ### main_worker Helper
 
 The `main_worker(run_func)` helper in `workers/base.py` handles all boilerplate:
@@ -120,7 +129,7 @@ SPRINTER_WORKER_RESULT_PATH=/tmp/export-result.json \
 
 **Module**: `workers.planner_worker`
 **Command type**: `analyze_issue`
-**Service**: `codex_analysis.service.CodexAnalysisService`
+**Default service**: `codex_analysis.service.CodexAnalysisService`
 
 Reads the exported Jira issue artifacts, builds an analysis prompt, runs Codex CLI in **read-only** mode, and writes `analysis_and_plan.md`.
 
@@ -161,7 +170,7 @@ See [Codex Analyzer documentation](codex_analysis.md) for full details.
 
 **Module**: `workers.implementer_worker`
 **Command type**: `execute_plan`
-**Service**: `codex_implementer.service.CodexImplementerService`
+**Default service**: `codex_implementer.service.CodexImplementerService`
 
 Reads `analysis_and_plan.md`, runs Codex CLI in **workspace-write** mode, applies the required code changes, and writes `commit_log.md`.
 

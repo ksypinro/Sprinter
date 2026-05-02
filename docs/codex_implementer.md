@@ -4,6 +4,8 @@ The Codex Implementer is the write-enabled stage that runs after Codex Analyzer 
 
 It reads the analyzer plan, maps the plan against the repository, applies the necessary code changes with Codex CLI, and writes implementation artifacts back to the issue export directory.
 
+`workers.implementer_worker` depends on the `Implementer` protocol from `workers.protocols`. `CodexImplementerService` is the default implementation, but another implementer can be injected into the worker through an alternate factory if it implements `implement_plan(payload)` and returns the same artifact keys.
+
 ## Pipeline
 
 The orchestrated flow is:
