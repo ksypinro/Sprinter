@@ -37,14 +37,20 @@ class FakeSession:
 
 
 class FakeGit:
-    def __init__(self):
+    def __init__(self, has_changes=True, current_branch="sprinter/SCRUM-1-command"):
         self.calls = []
+        self._has_changes = has_changes
+        self._current_branch = current_branch
 
     def has_changes(self):
-        return True
+        return self._has_changes
 
     def changed_files(self):
         return ["app.py", "tests/test_app.py"]
+
+    def current_branch(self):
+        self.calls.append(("current_branch",))
+        return self._current_branch
 
     def create_branch(self, branch):
         self.calls.append(("create_branch", branch))
@@ -55,8 +61,8 @@ class FakeGit:
     def commit(self, message, body):
         self.calls.append(("commit", message, body))
 
-    def push(self, remote, branch):
-        self.calls.append(("push", remote, branch))
+    def push(self, remote, branch, token=None):
+        self.calls.append(("push", remote, branch, bool(token)))
 
     def head_sha(self):
         return "abc123"
@@ -65,10 +71,20 @@ class FakeGit:
 class FakeGitHubClient:
     def __init__(self):
         self.created_pr = None
+        self.find_calls = []
+
+    def find_open_pull_request(self, head, base):
+        self.find_calls.append({"head": head, "base": base})
+        return None
 
     def create_pull_request(self, title, head, base, body, draft):
         self.created_pr = {"title": title, "head": head, "base": base, "body": body, "draft": draft}
         return {"number": 12, "html_url": "https://github.example/pull/12", "diff_url": "https://github.example/pull/12.diff", "draft": draft}
+
+
+class FailingCreatePullRequestClient(FakeGitHubClient):
+    def create_pull_request(self, title, head, base, body, draft):
+        raise RuntimeError("temporary API failure")
 
 
 class FakeReviewRunner:
@@ -112,10 +128,12 @@ class GitHubSettingsTestCase(unittest.TestCase):
             "SPRINTER_GITHUB_OWNER": "owner",
             "SPRINTER_GITHUB_REPO": "repo",
             "SPRINTER_GITHUB_DRAFT_PR": "false",
+            "SPRINTER_GITHUB_REQUEST_TIMEOUT_SECONDS": "12.5",
         })
 
         self.assertEqual(settings.base_branch, "main")
         self.assertFalse(settings.draft_pr)
+        self.assertEqual(settings.request_timeout_seconds, 12.5)
         settings.require_api()
 
     def test_require_api_reports_missing_values(self):
@@ -127,7 +145,7 @@ class GitAdapterTestCase(unittest.TestCase):
     def test_git_adapter_wraps_runner_commands(self):
         calls = []
 
-        def runner(args, cwd):
+        def runner(args, cwd, env=None):
             calls.append((args, cwd))
             return GitCommandResult(args, 0, "main\n", "")
 
@@ -135,6 +153,23 @@ class GitAdapterTestCase(unittest.TestCase):
 
         self.assertEqual(adapter.current_branch(), "main")
         self.assertEqual(calls[0][0], ["git", "rev-parse", "--abbrev-ref", "HEAD"])
+
+    def test_push_uses_token_backed_askpass_without_putting_token_in_args(self):
+        calls = []
+
+        def runner(args, cwd, env=None):
+            calls.append((args, env))
+            return GitCommandResult(args, 0, "", "")
+
+        adapter = GitAdapter(Path("/repo"), runner=runner)
+
+        adapter.push("origin", "sprinter/SCRUM-1", token="secret-token")
+
+        args, env = calls[0]
+        self.assertEqual(args, ["git", "push", "-u", "origin", "sprinter/SCRUM-1"])
+        self.assertNotIn("secret-token", args)
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["SPRINTER_GIT_TOKEN"], "secret-token")
 
 
 class GitHubClientTestCase(unittest.TestCase):
@@ -151,6 +186,24 @@ class GitHubClientTestCase(unittest.TestCase):
         self.assertEqual(call["method"], "POST")
         self.assertTrue(call["url"].endswith("/repos/owner/repo/pulls"))
         self.assertEqual(call["json"]["draft"], True)
+        self.assertEqual(call["timeout"], 20.0)
+
+    def test_find_open_pull_request_uses_head_base_and_timeout(self):
+        session = FakeSession(FakeResponse(payload=[{"number": 1}]))
+        client = GitHubClient(
+            GitHubSettings(token="token", owner="owner", repo="repo", request_timeout_seconds=7),
+            session=session,
+        )
+
+        pr = client.find_open_pull_request("sprinter/SCRUM-1", "main")
+
+        self.assertEqual(pr["number"], 1)
+        call = session.calls[0]
+        self.assertEqual(call["method"], "GET")
+        self.assertEqual(call["params"]["head"], "owner:sprinter/SCRUM-1")
+        self.assertEqual(call["params"]["base"], "main")
+        self.assertEqual(call["params"]["state"], "open")
+        self.assertEqual(call["timeout"], 7)
 
 
 class GitPusherServiceTestCase(unittest.TestCase):
@@ -180,8 +233,53 @@ class GitPusherServiceTestCase(unittest.TestCase):
             self.assertEqual(result["status"], "success")
             self.assertEqual(result["pr_number"], 12)
             self.assertTrue((issue_dir / "github_pr" / "github_pr_result.json").exists())
+            self.assertTrue((issue_dir / "github_pr" / "push_state.json").exists())
             self.assertEqual(fake_git.calls[0][0], "create_branch")
+            self.assertEqual(fake_git.calls[3], ("push", "origin", "sprinter/SCRUM-1-command-", True))
             self.assertEqual(fake_client.created_pr["base"], "main")
+
+    def test_retry_after_push_reuses_pushed_branch_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            issue_dir = repo_root / "exports" / "SCRUM-1"
+            impl_dir = issue_dir / "codex_implementation"
+            impl_dir.mkdir(parents=True)
+            commit_log = impl_dir / "commit_log.md"
+            commit_log.write_text("# Implementation Commit Log\n\n## Summary\nDone.\n", encoding="utf-8")
+
+            first_service = GitPusherService(
+                settings=GitHubSettings(token="token", owner="owner", repo="repo"),
+                repo_root=repo_root,
+                git=FakeGit(),
+                client=FailingCreatePullRequestClient(),
+            )
+            with self.assertRaises(RuntimeError):
+                first_service.create_pull_request(
+                    "SCRUM-1",
+                    "command-12345678",
+                    {"commit_log_path": "exports/SCRUM-1/codex_implementation/commit_log.md"},
+                )
+
+            retry_git = FakeGit(has_changes=False)
+            retry_client = FakeGitHubClient()
+            retry_service = GitPusherService(
+                settings=GitHubSettings(token="token", owner="owner", repo="repo"),
+                repo_root=repo_root,
+                git=retry_git,
+                client=retry_client,
+            )
+
+            result = retry_service.create_pull_request(
+                "SCRUM-1",
+                "retry-99999999",
+                {"commit_log_path": "exports/SCRUM-1/codex_implementation/commit_log.md"},
+            )
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(result["branch"], "sprinter/SCRUM-1-command-")
+            self.assertNotIn(("create_branch", "sprinter/SCRUM-1-retry-99"), retry_git.calls)
+            self.assertFalse([call for call in retry_git.calls if call[0] == "push"])
+            self.assertEqual(retry_client.created_pr["head"], "sprinter/SCRUM-1-command-")
 
     @unittest.skipIf(shutil.which("git") is None, "git executable is required for smoke test")
     def test_create_pull_request_smoke_with_temp_git_repo(self):

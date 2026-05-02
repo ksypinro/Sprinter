@@ -22,6 +22,7 @@ class GitHubSettings:
     branch_prefix: str = "sprinter/"
     draft_pr: bool = True
     api_base_url: str = "https://api.github.com"
+    request_timeout_seconds: float = 20.0
     codex_command: str = "codex"
     codex_sandbox: str = "read-only"
     codex_json: bool = True
@@ -30,11 +31,16 @@ class GitHubSettings:
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "GitHubSettings":
         source = env or os.environ
-        timeout_value = source.get("SPRINTER_GITHUB_REVIEW_TIMEOUT_SECONDS", str(cls.codex_timeout_seconds))
+        review_timeout_value = source.get("SPRINTER_GITHUB_REVIEW_TIMEOUT_SECONDS", str(cls.codex_timeout_seconds))
+        request_timeout_value = source.get("SPRINTER_GITHUB_REQUEST_TIMEOUT_SECONDS", str(cls.request_timeout_seconds))
         try:
-            timeout_seconds = int(timeout_value)
+            review_timeout_seconds = int(review_timeout_value)
         except ValueError as exc:
             raise GitHubSettingsError("SPRINTER_GITHUB_REVIEW_TIMEOUT_SECONDS must be an integer.") from exc
+        try:
+            request_timeout_seconds = float(request_timeout_value)
+        except ValueError as exc:
+            raise GitHubSettingsError("SPRINTER_GITHUB_REQUEST_TIMEOUT_SECONDS must be a number.") from exc
 
         settings = cls(
             token=_optional(source.get("SPRINTER_GITHUB_TOKEN")),
@@ -46,10 +52,11 @@ class GitHubSettings:
             branch_prefix=source.get("SPRINTER_GITHUB_BRANCH_PREFIX", cls.branch_prefix).strip() or cls.branch_prefix,
             draft_pr=_parse_bool(source.get("SPRINTER_GITHUB_DRAFT_PR"), cls.draft_pr, "SPRINTER_GITHUB_DRAFT_PR"),
             api_base_url=source.get("SPRINTER_GITHUB_API_BASE_URL", cls.api_base_url).rstrip("/"),
+            request_timeout_seconds=request_timeout_seconds,
             codex_command=source.get("SPRINTER_GITHUB_REVIEW_CODEX_COMMAND", cls.codex_command).strip() or cls.codex_command,
             codex_sandbox=source.get("SPRINTER_GITHUB_REVIEW_CODEX_SANDBOX", cls.codex_sandbox).strip() or cls.codex_sandbox,
             codex_json=_parse_bool(source.get("SPRINTER_GITHUB_REVIEW_CODEX_JSON"), cls.codex_json, "SPRINTER_GITHUB_REVIEW_CODEX_JSON"),
-            codex_timeout_seconds=timeout_seconds,
+            codex_timeout_seconds=review_timeout_seconds,
         )
         settings.validate()
         return settings
@@ -63,6 +70,8 @@ class GitHubSettings:
             raise GitHubSettingsError("GitHub branch prefix must not be empty.")
         if self.codex_sandbox != "read-only":
             raise GitHubSettingsError("GitHub reviewer Codex sandbox must be read-only.")
+        if self.request_timeout_seconds <= 0:
+            raise GitHubSettingsError("GitHub API request timeout must be positive.")
         if self.codex_timeout_seconds <= 0:
             raise GitHubSettingsError("GitHub reviewer timeout must be positive.")
 

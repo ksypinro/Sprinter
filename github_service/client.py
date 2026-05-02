@@ -37,6 +37,14 @@ class GitHubClient:
             "draft": draft,
         })
 
+    def find_open_pull_request(self, head: str, base: str) -> Optional[dict[str, Any]]:
+        pulls = self._request(
+            "GET",
+            f"{self.repo_path}/pulls",
+            params={"head": f"{self.settings.owner}:{head}", "base": base, "state": "open"},
+        )
+        return pulls[0] if pulls else None
+
     def get_pull_request(self, pr_number: int) -> dict[str, Any]:
         return self._request("GET", f"{self.repo_path}/pulls/{pr_number}")
 
@@ -52,9 +60,24 @@ class GitHubClient:
     def pull_requests_for_commit(self, sha: str) -> list[dict[str, Any]]:
         return self._request("GET", f"{self.repo_path}/commits/{sha}/pulls", accept="application/vnd.github+json")
 
-    def _request(self, method: str, path: str, json: Optional[dict[str, Any]] = None, accept: Optional[str] = None, text: bool = False):
+    def _request(
+        self,
+        method: str,
+        path: str,
+        json: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
+        accept: Optional[str] = None,
+        text: bool = False,
+    ):
         headers = {"Accept": accept} if accept else None
-        response = self.session.request(method, f"{self.settings.api_base_url}{path}", json=json, headers=headers)
+        response = self.session.request(
+            method,
+            f"{self.settings.api_base_url}{path}",
+            json=json,
+            params=params,
+            headers=headers,
+            timeout=self.settings.request_timeout_seconds,
+        )
         if response.status_code >= 400:
             raise GitHubAPIError(f"GitHub API {method} {path} failed: {response.status_code} {response.text}")
         return response.text if text else response.json()

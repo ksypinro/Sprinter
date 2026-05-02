@@ -57,12 +57,15 @@ SPRINTER_GITHUB_REMOTE=origin
 SPRINTER_GITHUB_BRANCH_PREFIX=sprinter/
 SPRINTER_GITHUB_DRAFT_PR=true
 SPRINTER_GITHUB_API_BASE_URL=https://api.github.com
+SPRINTER_GITHUB_REQUEST_TIMEOUT_SECONDS=20
 SPRINTER_GITHUB_REVIEW_CODEX_COMMAND=codex
 SPRINTER_GITHUB_REVIEW_CODEX_SANDBOX=read-only
 SPRINTER_GITHUB_REVIEW_TIMEOUT_SECONDS=900
 ```
 
 The reviewer requires `read-only` sandbox mode. The pusher never commits directly to the base branch and never merges, squashes, or approves a PR.
+
+For HTTPS remotes, the pusher uses `SPRINTER_GITHUB_TOKEN` through a temporary `GIT_ASKPASS` helper and disables terminal prompts during `git push`. This lets service environments push without a local `gh` login or interactive credential prompt. SSH remotes and existing credential helpers still work normally.
 
 ## Use With Orchestrator
 
@@ -197,9 +200,12 @@ PR creation writes:
 
 ```text
 exports/SCRUM-123/github_pr/
+  push_state.json
   pr_description.md
   github_pr_result.json
 ```
+
+`push_state.json` is written after the branch is pushed and before the PR API call. If PR creation fails after a successful push, retries reuse this state instead of trying to create a second commit from a clean worktree.
 
 Review writes:
 

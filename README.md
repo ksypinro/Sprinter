@@ -200,6 +200,7 @@ pip install -r requirements.txt
 | `SPRINTER_GITHUB_BASE_BRANCH` | No | Base branch for PRs (default: `main`) |
 | `SPRINTER_GITHUB_BRANCH_PREFIX` | No | Branch prefix for PRs (default: `sprinter/`) |
 | `SPRINTER_GITHUB_DRAFT_PR` | No | Create PRs as draft (default: `true`) |
+| `SPRINTER_GITHUB_REQUEST_TIMEOUT_SECONDS` | No | GitHub REST API request timeout (default: `20`) |
 
 ### Configuration Files
 
